@@ -1,0 +1,27 @@
+{
+  "name": "academic-task-manager",
+  "version": "1.0.0",
+  "description": "AI-powered academic task management platform for polytechnic students",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "install-all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "dev:frontend": "cd frontend && npm start",
+    "build:frontend": "cd frontend && npm run build",
+    "deploy:backend": "cd backend && sam build && sam deploy",
+    "test": "npm run test --workspaces"
+  },
+  "keywords": [
+    "academic",
+    "task-management",
+    "aws",
+    "amplify",
+    "aurora",
+    "serverless"
+  ],
+  "author": "",
+  "license": "MIT"
+}

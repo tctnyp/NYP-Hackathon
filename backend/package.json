@@ -1,0 +1,21 @@
+{
+  "name": "academic-task-manager-backend",
+  "version": "1.0.0",
+  "description": "Lambda functions for Academic Task Manager",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "deploy": "sam build && sam deploy"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.550.0",
+    "@aws-sdk/lib-dynamodb": "^3.550.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.550.0",
+    "@aws-sdk/client-sns": "^3.550.0",
+    "@aws-sdk/client-secrets-manager": "^3.550.0",
+    "aws-lambda": "^1.0.7"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
