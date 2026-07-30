@@ -8,15 +8,15 @@
     "deploy": "sam build && sam deploy"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.550.0",
-    "@aws-sdk/lib-dynamodb": "^3.550.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.550.0",
-    "@aws-sdk/client-bedrock-agent-runtime": "^3.550.0",
-    "@aws-sdk/client-sns": "^3.550.0",
-    "@aws-sdk/client-secrets-manager": "^3.550.0",
-    "aws-lambda": "^1.0.7"
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.1098.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1098.0",
+    "@aws-sdk/client-dynamodb": "^3.1098.0",
+    "@aws-sdk/client-secrets-manager": "^3.1098.0",
+    "@aws-sdk/client-sns": "^3.1098.0",
+    "@aws-sdk/lib-dynamodb": "^3.1098.0"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "@types/aws-lambda": "^8.10.162",
+    "jest": "^30.4.2"
   }
 }
