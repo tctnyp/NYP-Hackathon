@@ -2,6 +2,11 @@
 
 > **AI-Powered Task Management Platform for Polytechnic Students**
 
+[![CI/CD Pipeline](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/ci.yml/badge.svg)](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/ci.yml)
+[![Frontend CI](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/frontend-ci.yml)
+[![Backend CI](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/backend-ci.yml)
+[![CodeQL](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/tctnyp/NYP-Hackathon/actions/workflows/codeql-analysis.yml)
+
 An intelligent academic task management system built for the NYP Hackathon. Helps polytechnic students track deadlines, prioritize assignments, and manage their academic workload with AI-powered recommendations.
 
 ## 🌟 Features

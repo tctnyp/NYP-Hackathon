@@ -1,0 +1,97 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+
+  frontend-check:
+    name: Frontend Checks
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: TypeScript check
+        working-directory: ./frontend
+        run: npx tsc --noEmit
+      
+      - name: Build
+        working-directory: ./frontend
+        run: npm run build
+
+  backend-check:
+    name: Backend Checks
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+      
+      - name: Setup SAM
+        uses: aws-actions/setup-sam@v2
+      
+      - name: Validate SAM template
+        working-directory: ./backend
+        run: sam validate --lint
+      
+      - name: Build
+        working-directory: ./backend
+        run: sam build
+
+  all-checks-passed:
+    name: All Checks Passed
+    needs: [frontend-check, backend-check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          if [ "${{ needs.frontend-check.result }}" == "failure" ] || [ "${{ needs.backend-check.result }}" == "failure" ]; then
+            echo "One or more checks failed"
+            exit 1
+          fi
+          echo "All checks passed!"

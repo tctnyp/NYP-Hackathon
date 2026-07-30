@@ -1,0 +1,93 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'backend/**'
+
+jobs:
+  lint-and-test:
+    name: Lint and Test Backend
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: backend/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: ./backend
+      run: npm ci
+    
+    - name: Run linter
+      working-directory: ./backend
+      run: npm run lint --if-present
+      continue-on-error: true
+    
+    - name: Run tests
+      working-directory: ./backend
+      run: npm test --if-present
+      continue-on-error: true
+    
+    - name: Setup SAM CLI
+      uses: aws-actions/setup-sam@v2
+      with:
+        use-installer: true
+    
+    - name: Validate SAM template
+      working-directory: ./backend
+      run: sam validate --lint
+    
+    - name: Build SAM application
+      working-directory: ./backend
+      run: sam build
+    
+    - name: Upload SAM build artifacts
+      if: matrix.node-version == '18.x'
+      uses: actions/upload-artifact@v4
+      with:
+        name: backend-sam-build
+        path: backend/.aws-sam
+        retention-days: 7
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run npm audit
+        working-directory: ./backend
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './backend'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
