@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { aiApi } from '../services/api';
 import { Target, Sparkles, AlertTriangle } from 'lucide-react';
+import type { AIRecommendations } from '../types/api';
 
 function PriorityView() {
-  const [recommendations, setRecommendations] = useState(null);
+  const [recommendations, setRecommendations] = useState<AIRecommendations | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ function PriorityView() {
         <h1 className="text-3xl font-bold">AI Priority View</h1>
         <div className="flex items-center justify-center h-64 bg-white rounded-lg">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4" />
             <p className="text-gray-600">Analyzing your tasks with AI...</p>
           </div>
         </div>
@@ -69,6 +70,20 @@ function PriorityView() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {recommendations?.warnings && recommendations.warnings.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="text-yellow-600" size={24} />
+            <h2 className="text-lg font-semibold">Warnings</h2>
+          </div>
+          <ul className="space-y-2">
+            {recommendations.warnings.map((warning, index) => (
+              <li key={index} className="text-gray-700">• {warning}</li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
