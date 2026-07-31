@@ -93,7 +93,8 @@ Entity types in the same table:
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18.x or higher
+- Node.js 24.x or 26.x (Node 26 recommended)
+- npm 12.x
 - AWS Account with appropriate permissions
 - AWS CLI configured
 - AWS SAM CLI installed
