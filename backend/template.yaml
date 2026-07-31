@@ -15,6 +15,8 @@ Globals:
         SNS_TOPIC_ARN: !Ref ReminderTopic
         BEDROCK_REGION: us-east-1
         BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
+        BEDROCK_AGENT_ID: !Ref BedrockAgentId
+        BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
 
 Parameters:
   Environment:
@@ -24,6 +26,14 @@ Parameters:
       - dev
       - staging
       - prod
+  BedrockAgentId:
+    Type: String
+    Default: ""
+    Description: "(Optional) Bedrock Agent ID for natural language queries"
+  BedrockAgentAliasId:
+    Type: String
+    Default: ""
+    Description: "(Optional) Bedrock Agent Alias ID"
 
 Resources:
   # DynamoDB Tables
@@ -370,6 +380,28 @@ Resources:
             TableName: !Ref TasksTable
         - SNSPublishMessagePolicy:
             TopicName: !GetAtt ReminderTopic.TopicName
+
+  AgentInvokeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: agentInvoke.handler
+      Timeout: 60
+      Events:
+        AgentInvoke:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /ai/agent
+            Method: POST
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TasksTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeAgent
+              Resource: '*'
 
 Outputs:
   ApiUrl:
