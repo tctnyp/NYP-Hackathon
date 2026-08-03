@@ -75,7 +75,7 @@ jobs:
         run: npm ci
       
       - name: Setup SAM
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@v3
       
       - name: Validate SAM template
         working-directory: ./backend
