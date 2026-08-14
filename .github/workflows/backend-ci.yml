@@ -11,6 +11,10 @@ on:
     paths:
       - 'backend/**'
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   lint-and-test:
     name: Lint and Test Backend
@@ -29,7 +33,10 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-        cache-dependency-path: backend/package-lock.json
+        cache-dependency-path: package-lock.json
+
+    - name: Pin SAM-compatible npm
+      run: npm install --global npm@10.9.4
     
     - name: Install dependencies
       working-directory: ./backend

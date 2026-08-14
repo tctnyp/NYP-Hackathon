@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
+# Lockfiles are committed for reproducible GitHub builds
 
 # Build outputs
 dist/
