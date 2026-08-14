@@ -28,6 +28,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "package:amplify": "python scripts/package_amplify.py dist amplify-deploy.zip",
     "preview": "vite preview",
     "lint": "eslint src --ext js,jsx"
   },
