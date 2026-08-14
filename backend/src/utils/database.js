@@ -10,11 +10,15 @@ const {
   BatchWriteCommand,
 } = require('@aws-sdk/lib-dynamodb');
 
-const client = new DynamoDBClient({ region: process.env.AWS_REGION || 'ap-southeast-1' });
+const client = new DynamoDBClient({ region: process.env.REGION || 'us-east-1' });
 const docClient = DynamoDBDocumentClient.from(client);
 
 const TASKS_TABLE = process.env.TASKS_TABLE || 'academic-tasks';
 const USERS_TABLE = process.env.USERS_TABLE || 'academic-task-users';
+const ORGANIZATIONS_TABLE = process.env.ORGANIZATIONS_TABLE || 'academic-organizations';
+const SCHOOLS_TABLE = process.env.SCHOOLS_TABLE || 'academic-schools';
+const CLASSES_TABLE = process.env.CLASSES_TABLE || 'academic-classes';
+const ENROLLMENTS_TABLE = process.env.ENROLLMENTS_TABLE || 'academic-user-classes';
 
 /**
  * Get item from DynamoDB
@@ -141,6 +145,10 @@ module.exports = {
   docClient,
   TASKS_TABLE,
   USERS_TABLE,
+  ORGANIZATIONS_TABLE,
+  SCHOOLS_TABLE,
+  CLASSES_TABLE,
+  ENROLLMENTS_TABLE,
   getItem,
   putItem,
   updateItem,

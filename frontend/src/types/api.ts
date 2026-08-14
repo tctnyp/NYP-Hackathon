@@ -6,13 +6,13 @@ export type TaskDifficulty = 'easy' | 'medium' | 'hard' | 'very_hard';
 export interface Task {
   task_id: string;
   user_id: string;
-  module_id?: string;
+  module_id?: string | null;
   title: string;
-  description?: string;
+  description?: string | null;
   task_type: TaskType;
   deadline: string;
-  estimated_hours?: number;
-  grade_weight?: number;
+  estimated_hours?: number | null;
+  grade_weight?: number | null;
   difficulty: TaskDifficulty;
   is_group_work: boolean;
   status: TaskStatus;
@@ -50,7 +50,7 @@ export interface DashboardData {
 }
 
 export interface AIPriority {
-  task_id: number;
+  task_id: string;
   reason: string;
   suggested_action: string;
 }

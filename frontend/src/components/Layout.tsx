@@ -74,9 +74,11 @@ function Layout({ children, user, signOut }: LayoutProps) {
                   </p>
                 </div>
               </div>
-              <button onClick={signOut} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg">
-                <LogOut size={20} />
-              </button>
+              {signOut && (
+                <button onClick={signOut} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" aria-label="Sign out">
+                  <LogOut size={20} />
+                </button>
+              )}
             </div>
           </div>
         </div>

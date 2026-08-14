@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Academic Task Manager Backend - Serverless Application (Simplified for AWS Academy)
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs20.x
+    MemorySize: 512
+    Environment:
+      Variables:
+        REGION: !Ref AWS::Region
+        TASKS_TABLE: !Ref TasksTable
+        USERS_TABLE: !Ref UsersTable
+        SNS_TOPIC_ARN: !Ref ReminderTopic
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Resources:
+  # DynamoDB Tables
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-tasks-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1-TasksByDeadline
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-task-users-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # SNS Topic for Reminders
+  ReminderTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub academic-reminders-${Environment}
+      DisplayName: Academic Task Reminders
+
+  # API Gateway with API Key Authentication
+  TaskManagerApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Api-Key'"
+        AllowOrigin: "'*'"
+      Auth:
+        ApiKeyRequired: true
+
+  # API Key
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn:
+      - TaskManagerApiStage
+    Properties:
+      Name: !Sub academic-task-manager-key-${Environment}
+      Description: API Key for Academic Task Manager
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref TaskManagerApi
+          StageName: !Ref Environment
+
+  # Usage Plan
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn:
+      - TaskManagerApiStage
+    Properties:
+      UsagePlanName: !Sub academic-task-manager-usage-${Environment}
+      Description: Usage plan for Academic Task Manager
+      ApiStages:
+        - ApiId: !Ref TaskManagerApi
+          Stage: !Ref Environment
+      Throttle:
+        RateLimit: 1000
+        BurstLimit: 2000
+
+  # Link API Key to Usage Plan
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+  # Lambda Functions
+  GetTasksFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: getTasks.handler
+      Events:
+        GetTasks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /tasks
+            Method: GET
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TasksTable
+
+  CreateTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: createTask.handler
+      Events:
+        CreateTask:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /tasks
+            Method: POST
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+
+  UpdateTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: updateTask.handler
+      Events:
+        UpdateTask:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /tasks/{taskId}
+            Method: PUT
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+
+  DeleteTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: deleteTask.handler
+      Events:
+        DeleteTask:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /tasks/{taskId}
+            Method: DELETE
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+
+  GetModulesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: modules.getModules
+      Events:
+        GetModules:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /modules
+            Method: GET
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TasksTable
+
+  CreateModuleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: modules.createModule
+      Events:
+        CreateModule:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /modules
+            Method: POST
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+
+  GetDashboardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: getDashboard.handler
+      Events:
+        GetDashboard:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /dashboard
+            Method: GET
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TasksTable
+
+  ReminderCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: reminderChecker.handler
+      Events:
+        ScheduledCheck:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TasksTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt ReminderTopic.TopicName
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/
+
+  ApiKeyId:
+    Description: API Key ID (use AWS CLI to get the actual key value)
+    Value: !Ref ApiKey
+
+  TasksTableName:
+    Description: DynamoDB Tasks Table Name
+    Value: !Ref TasksTable
+
+  UsersTableName:
+    Description: DynamoDB Users Table Name
+    Value: !Ref UsersTable
+
+  GetApiKeyCommand:
+    Description: Command to retrieve the API Key
+    Value: !Sub 'aws apigateway get-api-key --api-key ${ApiKey} --include-value --query value --output text'

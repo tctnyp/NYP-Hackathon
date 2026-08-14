@@ -4,7 +4,7 @@
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Api-Key',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'Content-Type': 'application/json',
 };
@@ -39,10 +39,10 @@ function error(message, statusCode = 400, details = null) {
 }
 
 /**
- * Extract user ID from Cognito authorizer
+ * Extract user ID from an API authorizer or the explicit lab fallback
  */
 function getUserId(event) {
-  return event.requestContext?.authorizer?.claims?.sub || null;
+  return event.requestContext?.authorizer?.claims?.sub || process.env.DEFAULT_USER_ID || null;
 }
 
 /**

@@ -1,109 +1,87 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Academic Task Manager Backend - Serverless Application
-
-Globals:
-  Function:
-    Timeout: 30
-    Runtime: nodejs18.x
-    MemorySize: 512
-    Environment:
-      Variables:
-        AWS_REGION: !Ref AWS::Region
-        TASKS_TABLE: !Ref TasksTable
-        USERS_TABLE: !Ref UsersTable
-        SNS_TOPIC_ARN: !Ref ReminderTopic
-        BEDROCK_REGION: us-east-1
-        BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
-        BEDROCK_AGENT_ID: !Ref BedrockAgentId
-        BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
+Description: Academic Task Manager - AWS Academy lab deployment
 
 Parameters:
   Environment:
     Type: String
     Default: dev
-    AllowedValues:
-      - dev
-      - staging
-      - prod
-  BedrockAgentId:
+    AllowedValues: [dev, staging, prod]
+  LabRoleArn:
     Type: String
-    Default: ""
-    Description: "(Optional) Bedrock Agent ID for natural language queries"
-  BedrockAgentAliasId:
+    Default: arn:aws:iam::081045266942:role/LabRole
+  DemoUserId:
     Type: String
-    Default: ""
-    Description: "(Optional) Bedrock Agent Alias ID"
+    Default: lab-demo-user
+
+Globals:
+  Function:
+    CodeUri: src/
+    Runtime: nodejs24.x
+    Architectures: [x86_64]
+    Handler: handlers/getTasks.handler
+    MemorySize: 256
+    Timeout: 30
+    Environment:
+      Variables:
+        REGION: !Ref AWS::Region
+        TASKS_TABLE: !Ref TasksTable
+        USERS_TABLE: !Ref UsersTable
+        ORGANIZATIONS_TABLE: !Ref OrganizationsTable
+        SCHOOLS_TABLE: !Ref SchoolsTable
+        CLASSES_TABLE: !Ref ClassesTable
+        ENROLLMENTS_TABLE: !Ref EnrollmentsTable
+        SNS_TOPIC_ARN: !Ref ReminderTopic
+        DEFAULT_USER_ID: !Ref DemoUserId
+        DEFAULT_USER_EMAIL: lab-demo@example.invalid
 
 Resources:
-  # DynamoDB Tables
   TasksTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub academic-tasks-${Environment}
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: PK
-          AttributeType: S
-        - AttributeName: SK
-          AttributeType: S
-        - AttributeName: GSI1PK
-          AttributeType: S
-        - AttributeName: GSI1SK
-          AttributeType: S
-        - AttributeName: GSI2PK
-          AttributeType: S
-        - AttributeName: GSI2SK
-          AttributeType: S
-        - AttributeName: GSI3PK
-          AttributeType: S
-        - AttributeName: GSI3SK
-          AttributeType: S
-        - AttributeName: GSI4PK
-          AttributeType: S
-        - AttributeName: GSI4SK
-          AttributeType: S
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: GSI1PK, AttributeType: S }
+        - { AttributeName: GSI1SK, AttributeType: S }
+        - { AttributeName: GSI2PK, AttributeType: S }
+        - { AttributeName: GSI2SK, AttributeType: S }
+        - { AttributeName: GSI3PK, AttributeType: S }
+        - { AttributeName: GSI3SK, AttributeType: S }
+        - { AttributeName: GSI4PK, AttributeType: S }
+        - { AttributeName: GSI4SK, AttributeType: S }
       KeySchema:
-        - AttributeName: PK
-          KeyType: HASH
-        - AttributeName: SK
-          KeyType: RANGE
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
       GlobalSecondaryIndexes:
         - IndexName: GSI1-TasksByDeadline
           KeySchema:
-            - AttributeName: GSI1PK
-              KeyType: HASH
-            - AttributeName: GSI1SK
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
+            - { AttributeName: GSI1PK, KeyType: HASH }
+            - { AttributeName: GSI1SK, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
         - IndexName: GSI2-TasksByModule
           KeySchema:
-            - AttributeName: GSI2PK
-              KeyType: HASH
-            - AttributeName: GSI2SK
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
+            - { AttributeName: GSI2PK, KeyType: HASH }
+            - { AttributeName: GSI2SK, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
         - IndexName: GSI3-TasksByStatus
           KeySchema:
-            - AttributeName: GSI3PK
-              KeyType: HASH
-            - AttributeName: GSI3SK
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
+            - { AttributeName: GSI3PK, KeyType: HASH }
+            - { AttributeName: GSI3SK, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
         - IndexName: GSI4-RemindersByTask
           KeySchema:
-            - AttributeName: GSI4PK
-              KeyType: HASH
-            - AttributeName: GSI4SK
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
+            - { AttributeName: GSI4PK, KeyType: HASH }
+            - { AttributeName: GSI4SK, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+        - { Key: Environment, Value: !Ref Environment }
 
   UsersTable:
     Type: AWS::DynamoDB::Table
@@ -111,315 +89,333 @@ Resources:
       TableName: !Sub academic-task-users-${Environment}
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: user_id
-          AttributeType: S
-        - AttributeName: email
-          AttributeType: S
+        - { AttributeName: user_id, AttributeType: S }
+        - { AttributeName: email, AttributeType: S }
       KeySchema:
-        - AttributeName: user_id
-          KeyType: HASH
+        - { AttributeName: user_id, KeyType: HASH }
       GlobalSecondaryIndexes:
         - IndexName: EmailIndex
           KeySchema:
-            - AttributeName: email
-              KeyType: HASH
-          Projection:
-            ProjectionType: ALL
+            - { AttributeName: email, KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
 
-  # SNS Topic for Reminders
+  OrganizationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-organizations-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: organization_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: organization_id, KeyType: HASH }
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+
+  SchoolsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-schools-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: school_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: school_id, KeyType: HASH }
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+
+  ClassesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-classes-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: class_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: class_id, KeyType: HASH }
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+
+  EnrollmentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-user-classes-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: user_id, AttributeType: S }
+        - { AttributeName: class_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: user_id, KeyType: HASH }
+        - { AttributeName: class_id, KeyType: RANGE }
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+
   ReminderTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub academic-reminders-${Environment}
       DisplayName: Academic Task Reminders
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
 
-  # API Gateway
   TaskManagerApi:
     Type: AWS::Serverless::Api
     Properties:
+      Name: !Sub academic-task-manager-${Environment}
       StageName: !Ref Environment
+      EndpointConfiguration: REGIONAL
       Cors:
         AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
-        AllowHeaders: "'Content-Type,Authorization'"
+        AllowHeaders: "'Content-Type,X-Api-Key,Authorization'"
         AllowOrigin: "'*'"
-      Auth:
-        DefaultAuthorizer: CognitoAuthorizer
-        Authorizers:
-          CognitoAuthorizer:
-            UserPoolArn: !GetAtt UserPool.Arn
 
-  # Cognito User Pool
-  UserPool:
-    Type: AWS::Cognito::UserPool
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn: TaskManagerApiStage
     Properties:
-      UserPoolName: !Sub academic-task-users-${Environment}
-      AutoVerifiedAttributes:
-        - email
-      UsernameAttributes:
-        - email
-      Schema:
-        - Name: email
-          AttributeDataType: String
-          Required: true
-        - Name: name
-          AttributeDataType: String
-          Required: true
+      Name: !Sub academic-task-manager-key-${Environment}
+      Description: Browser demo key for the Academic Task Manager lab
+      Enabled: true
 
-  UserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: TaskManagerApiStage
     Properties:
-      ClientName: !Sub academic-task-client-${Environment}
-      UserPoolId: !Ref UserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_PASSWORD_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_USER_SRP_AUTH
+      UsagePlanName: !Sub academic-task-manager-usage-${Environment}
+      ApiStages:
+        - ApiId: !Ref TaskManagerApi
+          Stage: !Ref Environment
+      Throttle:
+        RateLimit: 10
+        BurstLimit: 20
+      Quota:
+        Limit: 10000
+        Period: MONTH
 
-  # Lambda Functions
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
   GetTasksFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: getTasks.handler
+      Role: !Ref LabRoleArn
+      Handler: handlers/getTasks.handler
       Events:
-        GetTasks:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /tasks
-            Method: GET
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: GET, Auth: { ApiKeyRequired: true } }
 
   CreateTaskFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: createTask.handler
+      Role: !Ref LabRoleArn
+      Handler: handlers/createTask.handler
       Events:
-        CreateTask:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /tasks
-            Method: POST
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: POST, Auth: { ApiKeyRequired: true } }
 
   UpdateTaskFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: updateTask.handler
+      Role: !Ref LabRoleArn
+      Handler: handlers/updateTask.handler
       Events:
-        UpdateTask:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /tasks/{taskId}
-            Method: PUT
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: PUT, Auth: { ApiKeyRequired: true } }
 
   DeleteTaskFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: deleteTask.handler
+      Role: !Ref LabRoleArn
+      Handler: handlers/deleteTask.handler
       Events:
-        DeleteTask:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /tasks/{taskId}
-            Method: DELETE
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: DELETE, Auth: { ApiKeyRequired: true } }
 
   GetModulesFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: modules.getModules
+      Role: !Ref LabRoleArn
+      Handler: handlers/modules.getModules
       Events:
-        GetModules:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /modules
-            Method: GET
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /modules, Method: GET, Auth: { ApiKeyRequired: true } }
 
   CreateModuleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: modules.createModule
+      Role: !Ref LabRoleArn
+      Handler: handlers/modules.createModule
       Events:
-        CreateModule:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /modules
-            Method: POST
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /modules, Method: POST, Auth: { ApiKeyRequired: true } }
 
   UpdateModuleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: modules.updateModule
+      Role: !Ref LabRoleArn
+      Handler: handlers/modules.updateModule
       Events:
-        UpdateModule:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /modules/{moduleId}
-            Method: PUT
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/modules/{moduleId}', Method: PUT, Auth: { ApiKeyRequired: true } }
 
   DeleteModuleFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: modules.deleteModule
+      Role: !Ref LabRoleArn
+      Handler: handlers/modules.deleteModule
       Events:
-        DeleteModule:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /modules/{moduleId}
-            Method: DELETE
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/modules/{moduleId}', Method: DELETE, Auth: { ApiKeyRequired: true } }
 
   GetDashboardFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: getDashboard.handler
+      Role: !Ref LabRoleArn
+      Handler: handlers/getDashboard.handler
       Events:
-        GetDashboard:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /dashboard
-            Method: GET
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref TasksTable
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /dashboard, Method: GET, Auth: { ApiKeyRequired: true } }
 
   AIPrioritizeFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: aiPrioritize.handler
-      Timeout: 60
+      Role: !Ref LabRoleArn
+      Handler: handlers/labAi.prioritize
       Events:
-        AIPrioritize:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /ai/prioritize
-            Method: POST
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
-        - Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-              Resource: '*'
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /ai/prioritize, Method: POST, Auth: { ApiKeyRequired: true } }
 
   AIBreakdownFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: aiBreakdown.handler
-      Timeout: 60
+      Role: !Ref LabRoleArn
+      Handler: handlers/labAi.breakdown
       Events:
-        AIBreakdown:
+        ApiEvent:
           Type: Api
-          Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /ai/breakdown/{taskId}
-            Method: POST
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref TasksTable
-        - Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-              Resource: '*'
-
-  ReminderCheckerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: src/handlers/
-      Handler: reminderChecker.handler
-      Events:
-        ScheduledCheck:
-          Type: Schedule
-          Properties:
-            Schedule: rate(15 minutes)
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref TasksTable
-        - SNSPublishMessagePolicy:
-            TopicName: !GetAtt ReminderTopic.TopicName
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/ai/breakdown/{taskId}', Method: POST, Auth: { ApiKeyRequired: true } }
 
   AgentInvokeFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/
-      Handler: agentInvoke.handler
-      Timeout: 60
+      Role: !Ref LabRoleArn
+      Handler: handlers/labAi.agent
       Events:
-        AgentInvoke:
+        ApiEvent:
           Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /ai/agent, Method: POST, Auth: { ApiKeyRequired: true } }
+
+  ReminderCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/reminderCheckerLab.handler
+      Events:
+        ScheduledCheck:
+          Type: Schedule
           Properties:
-            RestApiId: !Ref TaskManagerApi
-            Path: /ai/agent
-            Method: POST
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref TasksTable
-        - Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeAgent
-              Resource: '*'
+            Name: !Sub academic-task-reminder-check-${Environment}
+            Description: Check due academic task reminders every 15 minutes
+            Schedule: rate(15 minutes)
+            Enabled: true
+
+  GetProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/account.getProfile
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: GET, Auth: { ApiKeyRequired: true } }
+
+  UpsertProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/account.upsertProfile
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: PUT, Auth: { ApiKeyRequired: true } }
+
+  InstitutionCatalogFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/catalog.organizations
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /organizations, Method: GET, Auth: { ApiKeyRequired: true } }
+
+  SchoolsCatalogFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/catalog.schools
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /schools, Method: GET, Auth: { ApiKeyRequired: true } }
+
+  ClassesCatalogFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/catalog.classes
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /classes, Method: GET, Auth: { ApiKeyRequired: true } }
+
+  EnrollmentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/enrollments.list
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account/classes, Method: GET, Auth: { ApiKeyRequired: true } }
+
+  EnrollFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/enrollments.enroll
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account/classes, Method: POST, Auth: { ApiKeyRequired: true } }
 
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
-    Value: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/
-  
-  UserPoolId:
-    Description: Cognito User Pool ID
-    Value: !Ref UserPool
-  
-  UserPoolClientId:
-    Description: Cognito User Pool Client ID
-    Value: !Ref UserPoolClient
-  
+    Value: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+  ApiKeyId:
+    Description: API Gateway key ID; retrieve its value with get-api-key
+    Value: !Ref ApiKey
   TasksTableName:
-    Description: DynamoDB Tasks Table Name
     Value: !Ref TasksTable
-  
   UsersTableName:
-    Description: DynamoDB Users Table Name
     Value: !Ref UsersTable
+  ReminderTopicArn:
+    Value: !Ref ReminderTopic
+  ReminderFunctionName:
+    Value: !Ref ReminderCheckerFunction
