@@ -1,15 +1,15 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, CheckSquare, Calendar, BookOpen, Target, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, Calendar, BookOpen, Target, LogOut, Menu, X, Shield } from 'lucide-react';
 import { useState, ReactNode } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 
 interface LayoutProps {
   children: ReactNode;
-  user: any;
-  signOut?: () => void;
 }
 
-function Layout({ children, user, signOut }: LayoutProps) {
+function Layout({ children }: LayoutProps) {
   const location = useLocation();
+  const { user, signOut, isAdmin } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const navigation = [
@@ -20,7 +20,20 @@ function Layout({ children, user, signOut }: LayoutProps) {
     { name: 'Priority View', href: '/priority', icon: Target },
   ];
 
+  // Add admin panel if user is admin
+  if (isAdmin()) {
+    navigation.push({ name: 'Admin Panel', href: '/admin', icon: Shield });
+  }
+
   const isActive = (path: string) => location.pathname === path;
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Sign out error:', error);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -65,20 +78,21 @@ function Layout({ children, user, signOut }: LayoutProps) {
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
                   <span className="text-primary-700 font-medium">
-                    {user?.signInDetails?.loginId?.[0]?.toUpperCase() || 'U'}
+                    {user?.username?.[0]?.toUpperCase() || 'U'}
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate">
-                    {user?.signInDetails?.loginId || 'User'}
+                    {user?.username || 'User'}
                   </p>
+                  {isAdmin() && (
+                    <p className="text-xs text-purple-600 font-medium">Admin</p>
+                  )}
                 </div>
               </div>
-              {signOut && (
-                <button onClick={signOut} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" aria-label="Sign out">
-                  <LogOut size={20} />
-                </button>
-              )}
+              <button onClick={handleSignOut} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" aria-label="Sign out">
+                <LogOut size={20} />
+              </button>
             </div>
           </div>
         </div>

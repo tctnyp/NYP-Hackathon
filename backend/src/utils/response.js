@@ -4,8 +4,8 @@
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Api-Key',
-  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,PATCH,OPTIONS',
   'Content-Type': 'application/json',
 };
 
@@ -39,10 +39,47 @@ function error(message, statusCode = 400, details = null) {
 }
 
 /**
- * Extract user ID from an API authorizer or the explicit lab fallback
+ * Extract claims from API Gateway REST or HTTP API authorizers.
  */
+function getClaims(event) {
+  return event?.requestContext?.authorizer?.claims
+    || event?.requestContext?.authorizer?.jwt?.claims
+    || {};
+}
+
 function getUserId(event) {
-  return event.requestContext?.authorizer?.claims?.sub || process.env.DEFAULT_USER_ID || null;
+  return getClaims(event).sub || null;
+}
+
+function getUserEmail(event) {
+  return getClaims(event).email || null;
+}
+
+function getUsername(event) {
+  const claims = getClaims(event);
+  return claims['cognito:username'] || claims.username || claims.email || claims.sub || null;
+}
+
+function getUserName(event) {
+  const claims = getClaims(event);
+  const composedName = [claims.given_name, claims.family_name].filter(Boolean).join(' ');
+  return claims.name || composedName || null;
+}
+
+function getGroups(event) {
+  const rawGroups = getClaims(event)['cognito:groups'];
+  if (Array.isArray(rawGroups)) return rawGroups;
+  if (typeof rawGroups !== 'string' || !rawGroups.trim()) return [];
+
+  const normalized = rawGroups.trim().replace(/^\[/, '').replace(/\]$/, '');
+  return normalized
+    .split(',')
+    .map((group) => group.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+}
+
+function isAdmin(event) {
+  return getGroups(event).includes('Admins');
 }
 
 /**
@@ -72,7 +109,13 @@ function validateRequired(data, fields) {
 module.exports = {
   success,
   error,
+  getClaims,
   getUserId,
+  getUserEmail,
+  getUsername,
+  getUserName,
+  getGroups,
+  isAdmin,
   parseBody,
   validateRequired,
   CORS_HEADERS,
