@@ -23,9 +23,18 @@ Parameters:
     Default: ''
     NoEcho: true
     Description: Optional Google OAuth 2.0 Client Secret for social sign-in
+  CognitoFromEmail:
+    Type: String
+    Default: noreply@tancheetiong.com
+    Description: From address for Cognito transactional emails when an SES identity ARN is supplied
+  CognitoEmailSourceArn:
+    Type: String
+    Default: ''
+    Description: Optional ARN of a verified SES email or domain identity used by Cognito
 
 Conditions:
   HasGoogleOAuth: !Not [!Equals [!Ref GoogleOAuthClientId, '']]
+  HasCustomEmailSender: !Not [!Equals [!Ref CognitoEmailSourceArn, '']]
 
 Globals:
   Function:
@@ -76,8 +85,12 @@ Resources:
         - email
       AutoVerifiedAttributes:
         - email
-      EmailConfiguration:
-        EmailSendingAccount: COGNITO_DEFAULT
+      EmailConfiguration: !If
+        - HasCustomEmailSender
+        - EmailSendingAccount: DEVELOPER
+          From: !Ref CognitoFromEmail
+          SourceArn: !Ref CognitoEmailSourceArn
+        - EmailSendingAccount: COGNITO_DEFAULT
       UsernameConfiguration:
         CaseSensitive: false
       Policies:
