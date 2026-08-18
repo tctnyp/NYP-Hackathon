@@ -106,3 +106,37 @@ export const dashboardApi = {
 };
 
 export default apiClient;
+
+export interface AccountApiProfile {
+  display_name: string;
+  full_name: string;
+  profile_picture: string | null;
+  email?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountApiData {
+  profile: AccountApiProfile;
+  connections: Record<string, boolean | { connected: boolean; [key: string]: unknown }>;
+  password_change_available: boolean;
+  authorization_url?: string;
+  url?: string;
+}
+
+type AccountApiResponse = { data: AccountApiData };
+
+export const accountApi = {
+  get: () => apiClient.get<AccountApiResponse>('/account'),
+  updateProfile: (profile: Pick<AccountApiProfile, 'display_name' | 'full_name' | 'profile_picture'>) => (
+    apiClient.put<AccountApiResponse>('/account', profile)
+  ),
+  oauthAuthorize: (provider: 'google' | 'discord') => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'oauthAuthorize', provider })
+  ),
+  oauthCallback: (code: string, state: string) => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'oauthCallback', code, state })
+  ),
+  disconnect: (provider: 'google' | 'discord') => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'disconnect', provider })
+  ),
+};

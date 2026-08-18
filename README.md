@@ -13,7 +13,8 @@ Academic Tasks is a responsive academic workload manager for deadlines, assignme
 - Android-style bottom navigation and safe-area-aware mobile layout
 - Light, dark, and system themes
 - Solid colors, gradient presets, custom gradients, and local image backgrounds
-- Cognito authentication and administrator controls
+- Cognito authentication with Google and Discord federation
+- Account Settings for profile, appearance, password, and provider connections
 - Scheduled reminder processing and SNS notifications
 
 Experimental planning and AWS AI routes, handlers, schemas, and frontend surfaces are intentionally excluded from `main` and remain isolated to `dev`.
@@ -36,7 +37,7 @@ database/                  Reference schemas and sample data
 - `dev` contains active and experimental work, including AWS AI functionality.
 - `main` contains the approved final production surface without experimental AI endpoints.
 
-Operational installation, deployment, credentials, and hosting procedures are intentionally not published in this repository.
+Operational credentials and secrets are intentionally not published. Provider and OIDC signing secrets must remain in protected deployment parameters; see [`frontend/OAUTH_SETUP.md`](frontend/OAUTH_SETUP.md) for the non-secret Google and Discord Cognito configuration and redirect contract.
 
 ## More information
 

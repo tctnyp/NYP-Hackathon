@@ -7,22 +7,71 @@ Parameters:
     Type: String
     Default: dev
     AllowedValues: [dev, staging, prod]
+  AdminUsername:
+    Type: String
+    Default: admin
+    AllowedValues: [admin]
+    Description: The only Cognito username authorized for administrator access
   LabRoleArn:
     Type: String
     Default: arn:aws:iam::081045266942:role/LabRole
   FrontendUrl:
     Type: String
-    Default: https://main.d1wbf7oa294iz6.amplifyapp.com
+    Default: https://nypxaws.tancheetiong.com
     Description: Frontend URL for OAuth callbacks
   GoogleOAuthClientId:
     Type: String
     Default: ''
-    Description: Optional Google OAuth 2.0 Client ID for social sign-in
+    Description: Optional Google OAuth 2.0 Client ID for social sign-in and account linking
   GoogleOAuthClientSecret:
     Type: String
     Default: ''
     NoEcho: true
-    Description: Optional Google OAuth 2.0 Client Secret for social sign-in
+    Description: Optional Google OAuth 2.0 Client Secret for social sign-in and account linking
+  GoogleOAuthRedirectUri:
+    Type: String
+    Default: https://nypxaws.tancheetiong.com/account/settings
+    Description: Authenticated SPA route that completes Google account linking
+  DiscordOAuthClientId:
+    Type: String
+    Default: ''
+    Description: Optional Discord OAuth 2.0 Client ID for account linking
+  DiscordOAuthClientSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Optional Discord OAuth 2.0 Client Secret for account linking
+  DiscordOAuthRedirectUri:
+    Type: String
+    Default: https://nypxaws.tancheetiong.com/account/settings
+    Description: Frontend handoff used by Discord account linking and OIDC login
+  DiscordOIDCClientId:
+    Type: String
+    Default: ''
+    Description: Public OIDC client identifier shared by Cognito and the Discord bridge
+  DiscordOIDCClientSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Private client secret shared by Cognito and the Discord OIDC bridge
+  DiscordOIDCPrivateKeyBase64:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Base64-encoded PKCS8 RSA private key used to sign OIDC ID tokens
+  DiscordOIDCKeyId:
+    Type: String
+    Default: discord-oidc-1
+    Description: Public key identifier exposed by the bridge JWKS endpoint
+  DiscordOIDCScopes:
+    Type: String
+    Default: openid profile email
+    Description: OIDC scopes requested by Cognito from the Discord bridge
+  EnableDiscordCognito:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Explicitly enable the Cognito Discord provider after bridge discovery and JWKS are reachable
   CognitoFromEmail:
     Type: String
     Default: noreply@tancheetiong.com
@@ -33,7 +82,19 @@ Parameters:
     Description: Optional ARN of a verified SES email or domain identity used by Cognito
 
 Conditions:
-  HasGoogleOAuth: !Not [!Equals [!Ref GoogleOAuthClientId, '']]
+  HasGoogleOAuth: !And
+    - !Not [!Equals [!Ref GoogleOAuthClientId, '']]
+    - !Not [!Equals [!Ref GoogleOAuthClientSecret, '']]
+  HasDiscordBridgeConfiguration: !And
+    - !Not [!Equals [!Ref DiscordOAuthClientId, '']]
+    - !Not [!Equals [!Ref DiscordOAuthClientSecret, '']]
+    - !Not [!Equals [!Ref DiscordOAuthRedirectUri, '']]
+    - !Not [!Equals [!Ref DiscordOIDCClientId, '']]
+    - !Not [!Equals [!Ref DiscordOIDCClientSecret, '']]
+    - !Not [!Equals [!Ref DiscordOIDCPrivateKeyBase64, '']]
+  HasDiscordOIDC: !And
+    - !Condition HasDiscordBridgeConfiguration
+    - !Equals [!Ref EnableDiscordCognito, 'true']
   HasCustomEmailSender: !Not [!Equals [!Ref CognitoEmailSourceArn, '']]
 
 Globals:
@@ -47,6 +108,7 @@ Globals:
     Environment:
       Variables:
         REGION: !Ref AWS::Region
+        ADMIN_USERNAME: !Ref AdminUsername
         TASKS_TABLE: !Ref TasksTable
         USERS_TABLE: !Ref UsersTable
         ORGANIZATIONS_TABLE: !Ref OrganizationsTable
@@ -145,6 +207,7 @@ Resources:
       SupportedIdentityProviders:
         - COGNITO
         - !If [HasGoogleOAuth, !Ref GoogleIdentityProvider, !Ref 'AWS::NoValue']
+        - !If [HasDiscordOIDC, !Ref DiscordIdentityProvider, !Ref 'AWS::NoValue']
       AllowedOAuthFlowsUserPoolClient: true
       PreventUserExistenceErrors: ENABLED
       RefreshTokenValidity: 30
@@ -183,6 +246,25 @@ Resources:
       AttributeMapping:
         email: email
         name: name
+
+  DiscordIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Condition: HasDiscordOIDC
+    Properties:
+      UserPoolId: !Ref UserPool
+      ProviderName: Discord
+      ProviderType: OIDC
+      ProviderDetails:
+        oidc_issuer: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/oidc/discord
+        client_id: !Ref DiscordOIDCClientId
+        client_secret: !Ref DiscordOIDCClientSecret
+        authorize_scopes: !Ref DiscordOIDCScopes
+        attributes_request_method: GET
+      AttributeMapping:
+        email: email
+        name: name
+        preferred_username: preferred_username
+        picture: picture
 
   TasksTable:
     Type: AWS::DynamoDB::Table
@@ -248,6 +330,22 @@ Resources:
           Projection: { ProjectionType: ALL }
       Tags:
         - { Key: Project, Value: academic-task-manager }
+
+  DiscordOIDCSessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub academic-discord-oidc-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+        - { Key: Purpose, Value: discord-oidc-transactions }
 
   OrganizationsTable:
     Type: AWS::DynamoDB::Table
@@ -323,6 +421,67 @@ Resources:
         AllowMethods: "'GET,POST,PUT,DELETE,PATCH,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization'"
         AllowOrigin: "'*'"
+
+  DiscordOIDCFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/discordOidc.handler
+      Environment:
+        Variables:
+          DISCORD_OIDC_TABLE: !Ref DiscordOIDCSessionsTable
+          DISCORD_OIDC_CLIENT_ID: !Ref DiscordOIDCClientId
+          DISCORD_OIDC_CLIENT_SECRET: !Ref DiscordOIDCClientSecret
+          DISCORD_OIDC_PRIVATE_KEY_BASE64: !Ref DiscordOIDCPrivateKeyBase64
+          DISCORD_OIDC_KEY_ID: !Ref DiscordOIDCKeyId
+          DISCORD_OAUTH_CLIENT_ID: !Ref DiscordOAuthClientId
+          DISCORD_OAUTH_CLIENT_SECRET: !Ref DiscordOAuthClientSecret
+          DISCORD_OAUTH_REDIRECT_URI: !Ref DiscordOAuthRedirectUri
+          COGNITO_IDP_RESPONSE_URI: !Sub https://academic-task-mgr-${Environment}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com/oauth2/idpresponse
+          APP_URL: !Ref FrontendUrl
+      Events:
+        Discovery:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /oidc/discord/.well-known/openid-configuration
+            Method: GET
+            Auth: { Authorizer: NONE }
+        Jwks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /oidc/discord/jwks.json
+            Method: GET
+            Auth: { Authorizer: NONE }
+        Authorize:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /oidc/discord/authorize
+            Method: GET
+            Auth: { Authorizer: NONE }
+        Callback:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /oidc/discord/callback
+            Method: POST
+            Auth: { Authorizer: NONE }
+        Token:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /oidc/discord/token
+            Method: POST
+            Auth: { Authorizer: NONE }
+        UserInfo:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /oidc/discord/userinfo
+            Method: GET
+            Auth: { Authorizer: NONE }
 
   GetTasksFunction:
     Type: AWS::Serverless::Function
@@ -433,6 +592,14 @@ Resources:
     Properties:
       Role: !Ref LabRoleArn
       Handler: handlers/account.getProfile
+      Environment:
+        Variables:
+          GOOGLE_OAUTH_CLIENT_ID: !Ref GoogleOAuthClientId
+          GOOGLE_OAUTH_CLIENT_SECRET: !Ref GoogleOAuthClientSecret
+          GOOGLE_OAUTH_REDIRECT_URI: !Ref GoogleOAuthRedirectUri
+          DISCORD_OAUTH_CLIENT_ID: !Ref DiscordOAuthClientId
+          DISCORD_OAUTH_CLIENT_SECRET: !Ref DiscordOAuthClientSecret
+          DISCORD_OAUTH_REDIRECT_URI: !Ref DiscordOAuthRedirectUri
       Events:
         ApiEvent:
           Type: Api
@@ -443,6 +610,15 @@ Resources:
     Properties:
       Role: !Ref LabRoleArn
       Handler: handlers/account.upsertProfile
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+          GOOGLE_OAUTH_CLIENT_ID: !Ref GoogleOAuthClientId
+          GOOGLE_OAUTH_CLIENT_SECRET: !Ref GoogleOAuthClientSecret
+          GOOGLE_OAUTH_REDIRECT_URI: !Ref GoogleOAuthRedirectUri
+          DISCORD_OAUTH_CLIENT_ID: !Ref DiscordOAuthClientId
+          DISCORD_OAUTH_CLIENT_SECRET: !Ref DiscordOAuthClientSecret
+          DISCORD_OAUTH_REDIRECT_URI: !Ref DiscordOAuthRedirectUri
       Events:
         ApiEvent:
           Type: Api
@@ -541,6 +717,12 @@ Outputs:
   GoogleOAuthEnabled:
     Description: Whether Google OAuth is configured
     Value: !If [HasGoogleOAuth, 'true', 'false']
+  DiscordOIDCIssuerUrl:
+    Description: Public issuer URL for the self-hosted Discord OIDC bridge
+    Value: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/oidc/discord
+  DiscordOAuthEnabled:
+    Description: Whether Discord Cognito login is fully configured
+    Value: !If [HasDiscordOIDC, 'true', 'false']
   TasksTableName:
     Value: !Ref TasksTable
   UsersTableName:

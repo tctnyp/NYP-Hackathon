@@ -19,6 +19,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   forgotPassword: (username: string) => Promise<void>;
   confirmForgotPassword: (username: string, code: string, newPassword: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  updateUserAttributes: (attributes: Array<{ Name: string; Value: string }>) => Promise<void>;
   refreshSession: () => Promise<void>;
   loadSessionFromStorage: () => void;
   isAdmin: () => boolean;
@@ -47,12 +49,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const decoded = decodeJWT(idToken);
     if (!decoded) return null;
 
+    const cognitoUsername = decoded['cognito:username'] || decoded.username || decoded.email;
+    const isGoogleUser = typeof cognitoUsername === 'string' && cognitoUsername.toLowerCase().startsWith('google_');
+    const fallbackDisplayName = decoded.name || decoded.email?.split('@')[0];
+    const displayUsername = decoded.preferred_username
+      || (isGoogleUser ? fallbackDisplayName : cognitoUsername)
+      || fallbackDisplayName
+      || 'User';
+
     return {
+      ...decoded,
       sub: decoded.sub,
       email: decoded.email,
-      username: decoded['cognito:username'] || decoded.email,
+      username: displayUsername,
       groups: decoded['cognito:groups'] || [],
-      ...decoded,
     };
   };
 
@@ -132,6 +142,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await cognitoAuth.confirmForgotPassword(username, code, newPassword);
   };
 
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    await cognitoAuth.changePassword(currentPassword, newPassword);
+  };
+
+  const updateUserAttributes = async (attributes: Array<{ Name: string; Value: string }>) => {
+    await cognitoAuth.updateUserAttributes(attributes);
+  };
+
   const refreshSession = async () => {
     await cognitoAuth.refreshTokens();
     const idToken = tokenStorage.getIdToken();
@@ -148,7 +166,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const isAdmin = (): boolean => {
-    return user?.groups?.includes('Admins') || false;
+    return user?.['cognito:username'] === 'admin' && user?.groups?.includes('Admins') === true;
   };
 
   const value: AuthContextType = {
@@ -161,6 +179,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     signOut,
     forgotPassword,
     confirmForgotPassword,
+    changePassword,
+    updateUserAttributes,
     refreshSession,
     loadSessionFromStorage,
     isAdmin,

@@ -30,9 +30,21 @@ describe('Cognito response helpers', () => {
     expect(getUserName(restEvent)).toBe('Student Name');
   });
 
-  test('recognizes Admins membership in Cognito group strings', () => {
+  test('requires both the configured admin username and Admins membership', () => {
     expect(getGroups(restEvent)).toEqual(['Admins', 'Students']);
-    expect(isAdmin(restEvent)).toBe(true);
+    expect(isAdmin(restEvent)).toBe(false);
+
+    const adminEvent = {
+      requestContext: {
+        authorizer: {
+          claims: {
+            'cognito:username': 'admin',
+            'cognito:groups': '[Admins]',
+          },
+        },
+      },
+    };
+    expect(isAdmin(adminEvent)).toBe(true);
   });
 
   test('supports HTTP API JWT claims and array groups', () => {

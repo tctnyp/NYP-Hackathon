@@ -79,7 +79,10 @@ function getGroups(event) {
 }
 
 function isAdmin(event) {
-  return getGroups(event).includes('Admins');
+  const claims = getClaims(event);
+  const username = claims['cognito:username'] || claims.username || null;
+  const allowedAdminUsername = process.env.ADMIN_USERNAME || 'admin';
+  return username === allowedAdminUsername && getGroups(event).includes('Admins');
 }
 
 /**

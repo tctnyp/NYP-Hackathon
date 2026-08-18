@@ -247,35 +247,77 @@ export const cognitoAuth = {
     });
   },
 
-  // OAuth / Hosted UI helpers
-  async initiateHostedUILogin(provider?: 'Google'): Promise<void> {
+  async changePassword(previousPassword: string, proposedPassword: string): Promise<void> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+
+    await cognitoRequest('AWSCognitoIdentityProviderService.ChangePassword', {
+      AccessToken: accessToken,
+      PreviousPassword: previousPassword,
+      ProposedPassword: proposedPassword,
+    });
+  },
+
+  async updateUserAttributes(attributes: Array<{ Name: string; Value: string }>): Promise<void> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    if (!attributes.length) return;
+
+    await cognitoRequest('AWSCognitoIdentityProviderService.UpdateUserAttributes', {
+      AccessToken: accessToken,
+      UserAttributes: attributes,
+    });
+  },
+
+  // OAuth / Hosted UI helpers. Both providers must be configured in Cognito.
+  async initiateHostedUILogin(
+    provider: 'Google' | 'Discord',
+    returnTo = '/dashboard',
+  ): Promise<void> {
+    const cognitoDomain = import.meta.env.VITE_COGNITO_DOMAIN;
+    const appUrl = import.meta.env.VITE_APP_URL;
+
+    if (!COGNITO_CLIENT_ID || !cognitoDomain || !appUrl) {
+      throw new Error('Cognito social authentication is not configured');
+    }
+
     const { codeVerifier, codeChallenge } = await generatePKCE();
     const state = generateState();
 
-    // Store for callback
+    // Store transient values for the callback. Only local app paths are accepted.
+    const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//')
+      ? returnTo
+      : '/dashboard';
     sessionStorage.setItem('pkce_code_verifier', codeVerifier);
     sessionStorage.setItem('oauth_state', state);
+    sessionStorage.setItem('oauth_return_to', safeReturnTo);
 
-    const cognitoDomain = import.meta.env.VITE_COGNITO_DOMAIN;
-    // Normalize domain - remove https:// prefix if present
-    const normalizedDomain = cognitoDomain.replace(/^https?:\/\//i, '');
-    const redirectUri = `${import.meta.env.VITE_APP_URL}/auth/callback`;
+    // Normalize values so an optional protocol/trailing slash does not break OAuth.
+    const normalizedDomain = cognitoDomain.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+    const normalizedAppUrl = appUrl.replace(/\/$/, '');
+    const redirectUri = `${normalizedAppUrl}/auth/callback`;
 
     const params = new URLSearchParams({
       client_id: COGNITO_CLIENT_ID,
       response_type: 'code',
       scope: 'email openid profile',
       redirect_uri: redirectUri,
-      state: state,
+      state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
+      identity_provider: provider,
     });
 
-    if (provider) {
-      params.append('identity_provider', provider);
-    }
-
     window.location.href = `https://${normalizedDomain}/oauth2/authorize?${params.toString()}`;
+  },
+
+  consumeOAuthReturnTo(): string {
+    const returnTo = sessionStorage.getItem('oauth_return_to');
+    sessionStorage.removeItem('oauth_return_to');
+
+    return returnTo?.startsWith('/') && !returnTo.startsWith('//')
+      ? returnTo
+      : '/dashboard';
   },
 
   async handleOAuthCallback(code: string, state: string): Promise<CognitoTokens> {
@@ -296,8 +338,9 @@ export const cognitoAuth = {
 
     const cognitoDomain = import.meta.env.VITE_COGNITO_DOMAIN;
     // Normalize domain - remove https:// prefix if present
-    const normalizedDomain = cognitoDomain.replace(/^https?:\/\//i, '');
-    const redirectUri = `${import.meta.env.VITE_APP_URL}/auth/callback`;
+    const normalizedDomain = cognitoDomain.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+    const normalizedAppUrl = import.meta.env.VITE_APP_URL.replace(/\/$/, '');
+    const redirectUri = `${normalizedAppUrl}/auth/callback`;
 
     const params = new URLSearchParams({
       grant_type: 'authorization_code',

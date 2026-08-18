@@ -35,7 +35,7 @@ function AuthCallback() {
         await cognitoAuth.handleOAuthCallback(code, state);
         // Update context from already stored token without refresh
         loadSessionFromStorage();
-        navigate('/dashboard', { replace: true });
+        navigate(cognitoAuth.consumeOAuthReturnTo(), { replace: true });
       } catch (err: any) {
         setError(err.message || 'Failed to complete authentication');
       }
