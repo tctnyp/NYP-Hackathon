@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   Settings,
   Shield,
+  UsersRound,
   WifiOff,
   X,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useAccount } from '../contexts/AccountContext';
 import { usePwa } from '../contexts/PwaContext';
 import TaskNotificationManager from './TaskNotificationManager';
+import StudentWalkthrough from './StudentWalkthrough';
 
 interface LayoutProps {
   children: ReactNode;
@@ -25,9 +27,12 @@ interface LayoutProps {
 const primaryNavigation = [
   { name: 'Home', desktopName: 'Overview', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Tasks', desktopName: 'My tasks', href: '/tasks', icon: CheckSquare2 },
+  { name: 'Groups', desktopName: 'Groups', href: '/groups', icon: UsersRound },
   { name: 'Calendar', desktopName: 'Calendar', href: '/calendar', icon: CalendarDays },
   { name: 'Modules', desktopName: 'Modules', href: '/modules', icon: BookOpen },
 ];
+
+const mobileNavigation = primaryNavigation.filter((item) => item.href !== '/modules');
 
 function Layout({ children }: LayoutProps) {
   const location = useLocation();
@@ -45,7 +50,7 @@ function Layout({ children }: LayoutProps) {
   const pageName = isActive('/account/settings')
     ? 'Account settings'
     : desktopNavigation.find((item) => isActive(item.href))?.desktopName || 'Academic Tasks';
-  const moreActive = isActive('/admin') || isActive('/account/settings');
+  const moreActive = isActive('/modules') || isActive('/admin') || isActive('/account/settings');
   const displayName = profile.display_name || user?.preferred_username || user?.username || 'User';
 
   const handleSignOut = async () => {
@@ -68,6 +73,7 @@ function Layout({ children }: LayoutProps) {
   return (
     <div className="app-shell min-h-[100dvh]">
       <TaskNotificationManager />
+      <StudentWalkthrough />
       <header className="app-surface safe-top fixed inset-x-0 top-0 z-30 border-b px-4 pb-3 pt-3 backdrop-blur-xl lg:hidden">
         <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -148,7 +154,7 @@ function Layout({ children }: LayoutProps) {
       </main>
 
       <nav className="android-nav safe-bottom lg:hidden" aria-label="Mobile navigation">
-        {primaryNavigation.map((item) => {
+        {mobileNavigation.map((item) => {
           const Icon = item.icon;
           const active = isActive(item.href);
           return (
@@ -192,6 +198,7 @@ function Layout({ children }: LayoutProps) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Link to="/account/settings" className="more-tile" onClick={() => setMoreOpen(false)}><Settings size={21} /> <span>Account</span></Link>
+              <Link to="/modules" className="more-tile" onClick={() => setMoreOpen(false)}><BookOpen size={21} /> <span>Modules</span></Link>
               {isAdmin() && <Link to="/admin" className="more-tile" onClick={() => setMoreOpen(false)}><Shield size={21} /> <span>Admin</span></Link>}
               {canInstall && <button type="button" className="more-tile" onClick={() => void install()}><Download size={21} /> <span>Install app</span></button>}
               <button type="button" className="more-tile text-red-600" onClick={handleSignOut}><LogOut size={21} /> <span>Sign out</span></button>
