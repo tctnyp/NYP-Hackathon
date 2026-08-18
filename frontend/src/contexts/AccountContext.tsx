@@ -44,7 +44,7 @@ export interface AccountData {
 interface ProfileUpdate {
   display_name: string;
   full_name: string;
-  profile_picture: string | null;
+  profile_picture_upload_key?: string | null;
 }
 
 interface AccountContextValue extends AccountData {
@@ -55,6 +55,7 @@ interface AccountContextValue extends AccountData {
   completeOnboarding: (version: number) => Promise<void>;
   connect: (provider: ConnectionProvider) => Promise<void>;
   completeOAuth: (code: string, state: string) => Promise<void>;
+  cancelOAuth: (state: string) => Promise<void>;
   disconnect: (provider: ConnectionProvider) => Promise<void>;
   enableCalendarSync: () => Promise<void>;
   syncCalendarNow: () => Promise<void>;
@@ -164,6 +165,31 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     }
   }, [claimDisplayName, refreshAccount, user]);
 
+  useEffect(() => {
+    if (!user || !profile.profile_picture) return undefined;
+    let cancelled = false;
+    const refreshProfileUrl = async () => {
+      try {
+        const response = await accountApi.get();
+        if (!cancelled) applyAccountData(response.data.data);
+      } catch {
+        // Keep the current profile and retry on the next interval or focus event.
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshProfileUrl();
+    };
+    const timer = window.setInterval(() => void refreshProfileUrl(), 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+    };
+  }, [applyAccountData, profile.profile_picture, user]);
+
   const updateProfile = useCallback(async (nextProfile: ProfileUpdate) => {
     setError('');
     const response = await accountApi.updateProfile(nextProfile);
@@ -191,24 +217,47 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   const connect = useCallback(async (provider: ConnectionProvider) => {
     setError('');
-    const response = await accountApi.oauthAuthorize(provider);
-    const data = response.data.data;
-    const authorizationUrl = data.authorization_url || data.url;
-    if (!authorizationUrl) throw new Error('The connection service did not return an authorization URL.');
-    window.location.assign(authorizationUrl);
+    try {
+      const response = await accountApi.oauthAuthorize(provider);
+      const data = response.data.data;
+      const authorizationUrl = data.authorization_url || data.url;
+      if (!authorizationUrl) throw new Error('The connection service did not return an authorization URL.');
+      window.location.assign(authorizationUrl);
+    } catch (requestError) {
+      throw new Error(errorMessage(requestError));
+    }
   }, []);
 
   const completeOAuth = useCallback(async (code: string, state: string) => {
     setError('');
-    if (state.startsWith('calendar.')) {
-      const response = await googleCalendarApi.callback(code, state);
-      setCalendarSync(response.data.data.calendar_sync);
-    } else {
-      const response = await accountApi.oauthCallback(code, state);
-      applyAccountData(response.data.data);
+    try {
+      if (state.startsWith('calendar.')) {
+        const response = await googleCalendarApi.callback(code, state);
+        setCalendarSync(response.data.data.calendar_sync);
+      } else {
+        const response = await accountApi.oauthCallback(code, state);
+        applyAccountData(response.data.data);
+        try {
+          await refreshSession();
+        } catch {
+          // Linking is already complete; account data remains authoritative until the next token refresh.
+        }
+      }
+      await refreshAccount();
+    } catch (requestError) {
+      throw new Error(errorMessage(requestError));
     }
-    await refreshAccount();
-  }, [applyAccountData, refreshAccount]);
+  }, [applyAccountData, refreshAccount, refreshSession]);
+
+  const cancelOAuth = useCallback(async (state: string) => {
+    setError('');
+    try {
+      if (state.startsWith('calendar.')) await googleCalendarApi.oauthCancel(state);
+      else await accountApi.oauthCancel(state);
+    } catch (requestError) {
+      throw new Error(errorMessage(requestError));
+    }
+  }, []);
 
   const enableCalendarSync = useCallback(async () => {
     setError('');
@@ -232,10 +281,14 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   const disconnect = useCallback(async (provider: ConnectionProvider) => {
     setError('');
-    const response = await accountApi.disconnect(provider);
-    applyAccountData(response.data.data);
-    await refreshSession();
-    await refreshAccount();
+    try {
+      const response = await accountApi.disconnect(provider);
+      applyAccountData(response.data.data);
+      await refreshSession();
+      await refreshAccount();
+    } catch (requestError) {
+      throw new Error(errorMessage(requestError));
+    }
   }, [applyAccountData, refreshAccount, refreshSession]);
 
   const isConnected = useCallback((provider: ConnectionProvider) => {
@@ -256,12 +309,13 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     completeOnboarding,
     connect,
     completeOAuth,
+    cancelOAuth,
     disconnect,
     enableCalendarSync,
     syncCalendarNow,
     disableCalendarSync,
     isConnected,
-  }), [calendarSync, completeOAuth, completeOnboarding, connect, connections, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
+  }), [calendarSync, cancelOAuth, completeOAuth, completeOnboarding, connect, connections, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 }

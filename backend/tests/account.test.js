@@ -5,6 +5,15 @@ const mockPutItem = jest.fn();
 const mockUpdateItem = jest.fn();
 const mockDocumentSend = jest.fn();
 const mockCognitoSend = jest.fn();
+const mockDeleteOwnedMedia = jest.fn();
+const mockPromoteUpload = jest.fn();
+const mockSignedMediaUrl = jest.fn();
+const mockMediaError = class MediaError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+};
 
 jest.mock('../src/utils/database', () => ({
   docClient: { send: mockDocumentSend },
@@ -13,6 +22,13 @@ jest.mock('../src/utils/database', () => ({
   updateItem: mockUpdateItem,
   USERS_TABLE: 'users-test',
   timestamp: () => '2026-08-18T10:00:00.000Z',
+}));
+
+jest.mock('../src/utils/mediaStorage', () => ({
+  MediaError: mockMediaError,
+  deleteOwnedMedia: mockDeleteOwnedMedia,
+  promoteUpload: mockPromoteUpload,
+  signedMediaUrl: mockSignedMediaUrl,
 }));
 
 jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
@@ -84,6 +100,9 @@ describe('account handler', () => {
     jest.clearAllMocks();
     mockDocumentSend.mockReset();
     mockCognitoSend.mockReset();
+    mockDeleteOwnedMedia.mockReset().mockResolvedValue(undefined);
+    mockPromoteUpload.mockReset();
+    mockSignedMediaUrl.mockReset();
     mockGetItem.mockResolvedValue({ ...existingProfile });
     mockPutItem.mockImplementation(async (_table, item) => item);
     mockUpdateItem.mockImplementation(async (_table, _key, updates) => ({
@@ -143,34 +162,105 @@ describe('account handler', () => {
     expect(data.password_change_available).toBe(false);
   });
 
-  test('updates only validated account profile fields', async () => {
-    const png = `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64')}`;
+  test('updates validated profile fields, promotes a staged picture, and returns its signed URL', async () => {
+    const owner = 'a'.repeat(40);
+    const uploadKey = `uploads/${owner}/profile_photo/pending.png`;
+    const oldPictureKey = `media/${owner}/profile_photo/old.png`;
+    const newPictureKey = `media/${owner}/profile_photo/new.png`;
+    mockGetItem.mockResolvedValue({
+      ...existingProfile,
+      profile_picture: 'data:image/png;base64,legacy',
+      profile_picture_key: oldPictureKey,
+    });
+    mockPromoteUpload.mockResolvedValue({ objectKey: newPictureKey, mediaType: 'image/png', size: 128 });
+    mockSignedMediaUrl.mockResolvedValue({ url: 'https://signed.example/new.png' });
+
     const response = await account.upsertProfile(event({
       display_name: '  New display  ',
       full_name: '  New Name  ',
-      profile_picture: png,
+      profile_picture_upload_key: uploadKey,
     }));
 
     expect(response.statusCode).toBe(200);
+    expect(mockPromoteUpload).toHaveBeenCalledWith('user-123', uploadKey, 'profile_photo');
     expect(mockPutItem).toHaveBeenCalledWith('users-test', expect.objectContaining({
       display_name: 'New display',
       full_name: 'New Name',
-      profile_picture: png,
+      profile_picture_key: newPictureKey,
     }));
+    const persisted = mockPutItem.mock.calls[0][1];
+    expect(persisted).not.toHaveProperty('profile_picture');
+    expect(mockDeleteOwnedMedia).toHaveBeenCalledWith('user-123', oldPictureKey, 'profile_photo', true);
+    expect(mockSignedMediaUrl).toHaveBeenCalledWith('user-123', newPictureKey, 'profile_photo');
+    expect(responseData(response).profile.profile_picture).toBe('https://signed.example/new.png');
 
     const rejected = await account.upsertProfile(event({ role: 'admin' }));
     expect(rejected.statusCode).toBe(400);
     expect(mockPutItem).toHaveBeenCalledTimes(1);
   });
 
-  test('rejects mislabeled or oversized profile pictures', async () => {
-    const mislabeled = `data:image/jpeg;base64,${Buffer.from('not a jpeg').toString('base64')}`;
-    const response = await account.upsertProfile(event({ profile_picture: mislabeled }));
-    expect(response.statusCode).toBe(400);
+  test('GET resolves a durable profile picture to a signed URL', async () => {
+    const pictureKey = `media/${'b'.repeat(40)}/profile_photo/avatar.webp`;
+    mockGetItem.mockResolvedValue({ ...existingProfile, profile_picture_key: pictureKey });
+    mockSignedMediaUrl.mockResolvedValue({ url: 'https://signed.example/avatar.webp' });
 
-    const oversized = `data:image/png;base64,${'A'.repeat(200 * 1024)}`;
-    const oversizedResponse = await account.upsertProfile(event({ profile_picture: oversized }));
-    expect(oversizedResponse.statusCode).toBe(400);
+    const response = await account.getProfile(event());
+
+    expect(response.statusCode).toBe(200);
+    expect(mockSignedMediaUrl).toHaveBeenCalledWith('user-123', pictureKey, 'profile_photo');
+    expect(responseData(response).profile.profile_picture).toBe('https://signed.example/avatar.webp');
+    expect(responseData(response).profile.profile_picture_key).toBe(pictureKey);
+  });
+
+  test('removes a durable profile picture and its legacy inline value', async () => {
+    const oldPictureKey = `media/${'c'.repeat(40)}/profile_photo/old.jpg`;
+    mockGetItem.mockResolvedValue({
+      ...existingProfile,
+      profile_picture: 'data:image/jpeg;base64,legacy',
+      profile_picture_key: oldPictureKey,
+    });
+
+    const response = await account.upsertProfile(event({ profile_picture_upload_key: null }));
+
+    expect(response.statusCode).toBe(200);
+    const persisted = mockPutItem.mock.calls[0][1];
+    expect(persisted).not.toHaveProperty('profile_picture');
+    expect(persisted).not.toHaveProperty('profile_picture_key');
+    expect(mockDeleteOwnedMedia).toHaveBeenCalledWith('user-123', oldPictureKey, 'profile_photo', true);
+    expect(mockSignedMediaUrl).not.toHaveBeenCalled();
+    expect(responseData(response).profile.profile_picture).toBeNull();
+  });
+
+  test('rolls back a promoted profile picture when persistence fails', async () => {
+    const owner = 'd'.repeat(40);
+    const uploadKey = `uploads/${owner}/profile_photo/pending.jpg`;
+    const oldPictureKey = `media/${owner}/profile_photo/old.jpg`;
+    const promotedPictureKey = `media/${owner}/profile_photo/promoted.jpg`;
+    mockGetItem.mockResolvedValue({ ...existingProfile, profile_picture_key: oldPictureKey });
+    mockPromoteUpload.mockResolvedValue({ objectKey: promotedPictureKey, mediaType: 'image/jpeg', size: 256 });
+    mockPutItem.mockRejectedValueOnce(new Error('database unavailable'));
+
+    const response = await account.upsertProfile(event({ profile_picture_upload_key: uploadKey }));
+
+    expect(response.statusCode).toBe(500);
+    expect(mockDeleteOwnedMedia).toHaveBeenCalledTimes(1);
+    expect(mockDeleteOwnedMedia).toHaveBeenCalledWith('user-123', promotedPictureKey, 'profile_photo', true);
+    expect(mockDeleteOwnedMedia).not.toHaveBeenCalledWith('user-123', oldPictureKey, 'profile_photo', true);
+    expect(mockSignedMediaUrl).not.toHaveBeenCalled();
+  });
+
+  test('rejects legacy base64 pictures and invalid staged upload references', async () => {
+    const legacyPicture = `data:image/png;base64,${Buffer.from('legacy').toString('base64')}`;
+    const legacyResponse = await account.upsertProfile(event({ profile_picture: legacyPicture }));
+    expect(legacyResponse.statusCode).toBe(400);
+    expect(JSON.parse(legacyResponse.body).error).toMatch(/no longer accepted/i);
+
+    const invalidKeyResponse = await account.upsertProfile(event({
+      profile_picture_upload_key: 'uploads/not-the-owner/profile_photo/avatar.png',
+    }));
+    expect(invalidKeyResponse.statusCode).toBe(400);
+    expect(mockPromoteUpload).not.toHaveBeenCalled();
+    expect(mockPutItem).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -228,6 +318,26 @@ describe('account handler', () => {
     expect(JSON.stringify(updates)).not.toContain(state);
     expect(updates.oauth_state_discord.expires_at).toBeGreaterThanOrEqual(now + 590);
     expect(updates.oauth_state_discord.expires_at).toBeLessThanOrEqual(now + 610);
+  });
+
+  test('OAuth cancellation consumes state before returning the provider cancellation error', async () => {
+    const state = 'google.cancel-state';
+
+    const response = await account.upsertProfile(event({ action: 'oauthCancel', state }));
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body).error).toMatch(/Google authorization was cancelled/i);
+    expect(mockDocumentSend).toHaveBeenCalledTimes(1);
+    expect(mockDocumentSend.mock.calls[0][0].input).toEqual(expect.objectContaining({
+      UpdateExpression: 'REMOVE #oauth_state SET #updated_at = :updated_at',
+      ConditionExpression: '#oauth_state.#state_hash = :state_hash AND #oauth_state.#expires_at >= :now',
+      ReturnValues: 'ALL_OLD',
+      ExpressionAttributeValues: expect.objectContaining({
+        ':state_hash': createHash('sha256').update(`user-123\0${state}`).digest('hex'),
+      }),
+    }));
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockCognitoSend).not.toHaveBeenCalled();
   });
 
   test('Discord callback consumes state and never persists provider tokens', async () => {
@@ -597,7 +707,7 @@ describe('account handler', () => {
     'AliasExistsException',
     'InvalidParameterException',
     'ResourceConflictException',
-  ])('clears the staged Google identity after definitive Cognito %s', async (errorName) => {
+  ])('returns an actionable 409 and exactly clears the staged Google identity after Cognito %s', async (errorName) => {
     global.fetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'google-access-secret' }) })
       .mockResolvedValueOnce({
@@ -616,17 +726,56 @@ describe('account handler', () => {
     }));
 
     expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body).error).toMatch(/separate sign-in profile.*not automatically merged/i);
+    expect(response.body).not.toContain('definitive link failure');
     const release = mockDocumentSend.mock.calls
       .map(([command]) => command.input)
       .find((input) => input.ExpressionAttributeValues?.[':provider'] === 'google-definitive-failure');
     expect(release).toEqual(expect.objectContaining({
       UpdateExpression: 'REMOVE #connection SET #updated_at = :updated_at',
-      ConditionExpression: expect.stringContaining('#connection.#provider = :provider'),
+      ConditionExpression: '#connection.#status = :linking AND #connection.#generation = :generation AND #connection.#provider = :provider',
+      ExpressionAttributeValues: {
+        ':linking': 'linking',
+        ':generation': 'generation-test',
+        ':provider': 'google-definitive-failure',
+        ':updated_at': '2026-08-18T10:00:00.000Z',
+      },
     }));
-    expect(release.ExpressionAttributeValues).toEqual(expect.objectContaining({
-      ':generation': 'generation-test',
-      ':provider': 'google-definitive-failure',
+  });
+
+  test('sanitizes IAM AccessDenied during Google linking as a support-oriented 503', async () => {
+    global.fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'google-access-secret' }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sub: 'google-access-denied',
+          email: 'student@example.com',
+          email_verified: true,
+          name: 'Student Name',
+        }),
+      });
+    mockCognitoSend.mockRejectedValueOnce(Object.assign(
+      new Error('arn:aws:iam::123456789012:role/private is not authorized to link users'),
+      { name: 'AccessDeniedException' },
+    ));
+
+    const response = await account.upsertProfile(event({
+      action: 'oauthCallback', code: 'google-code', state: 'google.random-state',
     }));
+
+    expect(response.statusCode).toBe(503);
+    expect(JSON.parse(response.body).error).toBe(
+      'Google account linking is temporarily unavailable. Please contact support.',
+    );
+    expect(response.body).not.toMatch(/arn:aws|123456789012|private/i);
+    const release = mockDocumentSend.mock.calls
+      .map(([command]) => command.input)
+      .find((input) => input.UpdateExpression === 'REMOVE #connection SET #updated_at = :updated_at');
+    expect(release.ConditionExpression).toBe(
+      '#connection.#status = :linking AND #connection.#generation = :generation AND #connection.#provider = :provider',
+    );
+    expect(release.ExpressionAttributeValues[':provider']).toBe('google-access-denied');
   });
 
   test('preserves a staged Google identity when Cognito linking times out ambiguously', async () => {

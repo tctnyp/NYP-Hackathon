@@ -221,6 +221,19 @@ describe('Google Calendar consent handler', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  test('consumes a denied Calendar OAuth state without contacting Google', async () => {
+    mockSend.mockResolvedValueOnce(consumedState());
+    const state = `calendar.${'d'.repeat(43)}`;
+    const response = await calendar.update(event({ action: 'oauthCancel', state }));
+    expect(response.statusCode).toBe(200);
+    expect(responseData(response)).toEqual({ cancelled: true });
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0][0].input).toEqual(expect.objectContaining({
+      ConditionExpression: expect.stringContaining('#oauth_state.#state_hash = :state_hash'),
+    }));
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   test('rejects callback when unlink marked the Google connection inactive after consent began', async () => {
     mockSend.mockResolvedValueOnce(consumedState());
     mockGetGoogleLinkProfile.mockResolvedValue({

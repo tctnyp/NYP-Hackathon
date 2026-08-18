@@ -8,9 +8,9 @@ import BackgroundPicker from './BackgroundPicker';
 import { LoginStorageSettings } from './LoginStorageConsent';
 import NotificationSettings from './NotificationSettings';
 import { openStudentWalkthrough } from './StudentWalkthrough';
+import { discardTemporaryMedia, uploadTemporaryMedia } from '../services/media';
+import { resizeProfilePhoto } from '../utils/imageResize';
 
-const PROFILE_PICTURE_MAX_LENGTH = 200_000;
-const PROFILE_PICTURE_PATTERN = /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
 
 const themeOptions: Array<{ value: ThemePreference; label: string; icon: typeof Sun }> = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -45,6 +45,7 @@ function AccountSettings() {
     updateProfile,
     connect,
     completeOAuth,
+    cancelOAuth,
     disconnect,
     calendar_sync: calendarSync,
     enableCalendarSync,
@@ -57,6 +58,9 @@ function AccountSettings() {
   const [displayName, setDisplayName] = useState('');
   const [fullName, setFullName] = useState('');
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
+  const [profilePictureUploadKey, setProfilePictureUploadKey] = useState<string | null | undefined>(undefined);
+  const [processingProfilePicture, setProcessingProfilePicture] = useState(false);
+  const profilePreviewUrl = useRef<string | null>(null);
   const [profileError, setProfileError] = useState('');
   const [profileMessage, setProfileMessage] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -78,17 +82,35 @@ function AccountSettings() {
     setDisplayName(profile.display_name || user?.preferred_username || user?.username || '');
     setFullName(profile.full_name || user?.name || '');
     setProfilePicture(profile.profile_picture || null);
+    setProfilePictureUploadKey(undefined);
   }, [profile, user]);
+
+  useEffect(() => () => {
+    if (profilePreviewUrl.current) URL.revokeObjectURL(profilePreviewUrl.current);
+  }, []);
 
   useEffect(() => {
     const code = searchParams.get('code');
     const state = searchParams.get('state');
-    const oauthError = searchParams.get('error_description') || searchParams.get('error');
+    const oauthError = searchParams.get('error');
 
     if (oauthError && !callbackStarted.current) {
       callbackStarted.current = true;
-      setConnectionError(oauthError);
-      navigate('/account/settings', { replace: true });
+      if (!state) {
+        setConnectionError('The account provider returned an invalid callback. Please try again.');
+        navigate('/account/settings', { replace: true });
+        return;
+      }
+      setConnectionBusy('callback');
+      void cancelOAuth(state)
+        .catch((callbackError) => {
+          if (state.startsWith('calendar.')) setCalendarError(messageFrom(callbackError));
+          else setConnectionError(messageFrom(callbackError));
+        })
+        .finally(() => {
+          setConnectionBusy(null);
+          navigate('/account/settings', { replace: true });
+        });
       return;
     }
     if (!code && !state) return;
@@ -115,33 +137,41 @@ function AccountSettings() {
         setConnectionBusy(null);
         navigate('/account/settings', { replace: true });
       });
-  }, [completeOAuth, navigate, searchParams]);
+  }, [cancelOAuth, completeOAuth, navigate, searchParams]);
 
-  const chooseProfilePicture = (event: ChangeEvent<HTMLInputElement>) => {
+  const chooseProfilePicture = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     setProfileError('');
     setProfileMessage('');
     if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      setProfileError('Choose a PNG, JPEG, or WebP image.');
-      return;
-    }
-    if (file.size > 150_000) {
-      setProfileError('Choose an image smaller than 150 KB so the encoded profile picture remains under 200 KB.');
-      return;
-    }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== 'string' || !PROFILE_PICTURE_PATTERN.test(reader.result) || reader.result.length > PROFILE_PICTURE_MAX_LENGTH) {
-        setProfileError('That image could not be used. Choose a smaller PNG, JPEG, or WebP image.');
-        return;
-      }
-      setProfilePicture(reader.result);
-    };
-    reader.onerror = () => setProfileError('Unable to read that image.');
-    reader.readAsDataURL(file);
+    setProcessingProfilePicture(true);
+    let temporaryKey: string | null = null;
+    try {
+      const resized = await resizeProfilePhoto(file);
+      temporaryKey = await uploadTemporaryMedia(resized, 'profile_photo');
+      if (profilePictureUploadKey) void discardTemporaryMedia(profilePictureUploadKey, 'profile_photo').catch(() => {});
+      if (profilePreviewUrl.current) URL.revokeObjectURL(profilePreviewUrl.current);
+      profilePreviewUrl.current = URL.createObjectURL(resized);
+      setProfilePicture(profilePreviewUrl.current);
+      setProfilePictureUploadKey(temporaryKey);
+    } catch (uploadError) {
+      if (temporaryKey) void discardTemporaryMedia(temporaryKey, 'profile_photo').catch(() => {});
+      setProfileError(messageFrom(uploadError));
+    } finally {
+      setProcessingProfilePicture(false);
+    }
+  };
+
+  const removeProfilePicture = () => {
+    if (profilePictureUploadKey) void discardTemporaryMedia(profilePictureUploadKey, 'profile_photo').catch(() => {});
+    if (profilePreviewUrl.current) {
+      URL.revokeObjectURL(profilePreviewUrl.current);
+      profilePreviewUrl.current = null;
+    }
+    setProfilePicture(null);
+    setProfilePictureUploadKey(null);
   };
 
   const saveProfile = async (event: FormEvent) => {
@@ -158,14 +188,14 @@ function AccountSettings() {
       setProfileError('Full name is required.');
       return;
     }
-    if (profilePicture && (!PROFILE_PICTURE_PATTERN.test(profilePicture) || profilePicture.length > PROFILE_PICTURE_MAX_LENGTH)) {
-      setProfileError('The profile picture must be a PNG, JPEG, or WebP data image under 200 KB.');
-      return;
-    }
-
     setSavingProfile(true);
     try {
-      await updateProfile({ display_name: cleanDisplayName, full_name: cleanFullName, profile_picture: profilePicture });
+      await updateProfile({
+        display_name: cleanDisplayName,
+        full_name: cleanFullName,
+        ...(profilePictureUploadKey !== undefined ? { profile_picture_upload_key: profilePictureUploadKey } : {}),
+      });
+      setProfilePictureUploadKey(undefined);
       setProfileMessage('Profile saved.');
     } catch (saveError) {
       setProfileError(messageFrom(saveError));
@@ -296,15 +326,15 @@ function AccountSettings() {
             )}
             <div className="flex flex-wrap gap-2">
               <label className="btn-secondary flex cursor-pointer items-center gap-2">
-                <Upload size={17} /> Choose picture
-                <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseProfilePicture} />
+                {processingProfilePicture ? <LoaderCircle className="animate-spin" size={17} /> : <Upload size={17} />} {processingProfilePicture ? 'Resizing and uploading…' : 'Choose picture'}
+                <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" disabled={processingProfilePicture || savingProfile} onChange={(event) => void chooseProfilePicture(event)} />
               </label>
               {profilePicture && (
-                <button type="button" className="btn-secondary flex items-center gap-2" onClick={() => setProfilePicture(null)}>
+                <button type="button" className="btn-secondary flex items-center gap-2" onClick={removeProfilePicture}>
                   <X size={17} /> Remove
                 </button>
               )}
-              <p className="w-full text-xs text-gray-500">PNG, JPEG, or WebP; encoded size under 200 KB.</p>
+              <p className="w-full text-xs text-gray-500">PNG, JPEG, or WebP under 100 MiB. Photos are resized to 512×512 and stored privately in Amazon S3.</p>
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -320,7 +350,7 @@ function AccountSettings() {
           <p className="text-sm text-gray-500">Email: {profile.email || user?.email}</p>
           {profileError && <p className="text-sm font-medium text-red-600" role="alert">{profileError}</p>}
           {profileMessage && <p className="text-sm font-medium text-green-700" role="status">{profileMessage}</p>}
-          <button className="btn-primary flex items-center justify-center gap-2" type="submit" disabled={savingProfile}>
+          <button className="btn-primary flex items-center justify-center gap-2" type="submit" disabled={savingProfile || processingProfilePicture}>
             {savingProfile ? <LoaderCircle className="animate-spin" size={18} /> : <Save size={18} />}
             Save profile
           </button>
@@ -352,7 +382,7 @@ function AccountSettings() {
             const details = typeof connection === 'object' ? connection : undefined;
             const disconnectAllowed = details?.disconnect_allowed !== false;
             const busy = connectionBusy === provider.id || connectionBusy === 'callback';
-            const actionDisabled = busy || (connected && !disconnectAllowed);
+            const actionDisabled = busy || details?.available === false || (connected && !disconnectAllowed);
             const actionLabel = busy ? 'Working…' : connected ? 'Unlink' : 'Link';
             const Icon = provider.icon;
             return (

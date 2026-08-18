@@ -31,6 +31,8 @@ Parameters:
   GoogleOAuthRedirectUri:
     Type: String
     Default: https://nypxaws.tancheetiong.com/account/settings
+    AllowedPattern: '^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/account/settings$|^http://localhost(:[0-9]+)?/account/settings$'
+    ConstraintDescription: Must be an HTTPS origin (or localhost) followed by /account/settings
     Description: Authenticated SPA route that completes Google account linking
   EnableGoogleCalendarSync:
     Type: String
@@ -129,6 +131,7 @@ Conditions:
   HasGoogleOAuth: !And
     - !Not [!Equals [!Ref GoogleOAuthClientId, '']]
     - !Not [!Equals [!Ref GoogleOAuthClientSecret, '']]
+    - !Not [!Equals [!Ref GoogleOAuthRedirectUri, '']]
   HasGoogleCalendarSync: !And
     - !Equals [!Ref EnableGoogleCalendarSync, 'true']
     - !Not [!Equals [!Ref GoogleCalendarOAuthClientId, '']]
@@ -163,6 +166,7 @@ Globals:
         ADMIN_USERNAME: !Ref AdminUsername
         TASKS_TABLE: !Ref TasksTable
         USERS_TABLE: !Ref UsersTable
+        MEDIA_BUCKET: !Ref MediaBucket
         CALENDAR_CONNECTIONS_TABLE: !Ref GoogleCalendarConnectionsTable
         GROUPS_TABLE: !Ref GroupsTable
         ORGANIZATIONS_TABLE: !Ref OrganizationsTable
@@ -171,6 +175,75 @@ Globals:
         ENROLLMENTS_TABLE: !Ref EnrollmentsTable
 
 Resources:
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration: { Status: Enabled }
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - !Ref FrontendUrl
+              - https://main.d1wbf7oa294iz6.amplifyapp.com
+              - http://localhost:5173
+            AllowedMethods: [POST]
+            AllowedHeaders: ['*']
+            ExposedHeaders: [ETag, x-amz-checksum-sha256, x-amz-version-id]
+            MaxAge: 300
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTemporaryUploads
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 1
+            NoncurrentVersionExpiration: { NoncurrentDays: 1 }
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+          - Id: PruneNoncurrentMedia
+            Status: Enabled
+            Prefix: media/
+            NoncurrentVersionExpiration: { NoncurrentDays: 7 }
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: DataClassification, Value: private-user-media }
+
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt MediaBucket.Arn
+              - !Sub '${MediaBucket.Arn}/*'
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+          - Sid: AllowApplicationMediaObjects
+            Effect: Allow
+            Principal: { AWS: !Ref LabRoleArn }
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: !Sub '${MediaBucket.Arn}/*'
+
   # Cognito PostConfirmation trigger Lambda (created before UserPool to break circular dependency)
   PostConfirmationFunction:
     Type: AWS::Serverless::Function
@@ -616,6 +689,26 @@ Resources:
             Path: /oidc/discord/userinfo
             Method: GET
             Auth: { Authorizer: NONE }
+
+  MediaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/media.handler
+      MemorySize: 384
+      Events:
+        CreateUpload:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /media/uploads, Method: POST }
+        CompleteUpload:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /media/complete, Method: POST }
+        ResolveMedia:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /media/resolve, Method: POST }
+        DeleteMedia:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /media, Method: DELETE }
 
   GroupsFunction:
     Type: AWS::Serverless::Function

@@ -5,6 +5,7 @@ import { AlertCircle, ArrowRight, CheckCircle2, Clock3, ListTodo, Plus, RefreshC
 import type { DashboardData, DashboardModuleSummary, DashboardStatistics, DashboardWorkloadWeek, Task } from '../types/api';
 import { useAccount } from '../contexts/AccountContext';
 import NotificationPrompt from './NotificationPrompt';
+import { greetingForLocalTime } from '../utils/greeting';
 
 const statusColors = {
   completed: '#16a34a',
@@ -173,7 +174,20 @@ function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [localTime, setLocalTime] = useState(() => new Date());
   const { profile } = useAccount();
+
+  useEffect(() => {
+    const updateClock = () => setLocalTime(new Date());
+    const timer = window.setInterval(updateClock, 60_000);
+    document.addEventListener('visibilitychange', updateClock);
+    window.addEventListener('focus', updateClock);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', updateClock);
+      window.removeEventListener('focus', updateClock);
+    };
+  }, []);
 
   const loadDashboard = async () => {
     try {
@@ -219,8 +233,7 @@ function Dashboard() {
   const upcoming = data?.upcoming_tasks?.slice(0, 4) || [];
   const priorities = data?.high_priority_tasks?.slice(0, 3) || [];
   const firstName = (profile.display_name || profile.full_name || '').trim().split(' ')[0];
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const greeting = greetingForLocalTime(localTime);
 
   const statCards = [
     { name: 'Total tasks', value: stats.total_tasks, note: 'Across your workspace', icon: ListTodo, tone: 'metric-blue' },

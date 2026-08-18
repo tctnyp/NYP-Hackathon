@@ -12,7 +12,7 @@
     "dev:frontend": "cd frontend && npm start",
     "build:frontend": "cd frontend && npm run build",
     "deploy:backend": "cd backend && sam build && sam deploy",
-    "test": "npm run test --workspaces"
+    "test": "npm test --workspace=backend --"
   },
   "keywords": [
     "academic",

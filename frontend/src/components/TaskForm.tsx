@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { taskExtractionsApi } from '../services/api';
 import type { TaskExtractionData, TaskExtractionFields, TaskExtractionRequest } from '../services/api';
+import { discardTemporaryMedia, uploadTemporaryMedia } from '../services/media';
 import type { Module, Task, TaskPriority, TaskStatus, TaskType } from '../types/api';
 
 interface TaskFormProps {
@@ -29,7 +30,7 @@ interface FormState {
 }
 
 type ModifiedFields = Partial<Record<keyof FormState, boolean>>;
-type UploadPayload = Pick<TaskExtractionRequest, 'file_name' | 'media_type' | 'document_base64'>;
+interface UploadPayload { file: File }
 
 const taskTypes: TaskType[] = [
   'assignment',
@@ -72,18 +73,6 @@ function toDateTimeLocal(value?: string) {
 function extractionDateTimeLocal(value: string) {
   const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
   return match ? `${match[1]}T${match[2]}` : '';
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 32_768;
-  let binary = '';
-
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-
-  return window.btoa(binary);
 }
 
 function normalizeModuleCode(value: string) {
@@ -140,7 +129,6 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
   });
   const [modifiedFields, setModifiedFields] = useState<ModifiedFields>({});
   const [upload, setUpload] = useState<UploadPayload | null>(null);
-  const [readingFile, setReadingFile] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extraction, setExtraction] = useState<TaskExtractionData | null>(null);
   const [extractionError, setExtractionError] = useState('');
@@ -165,11 +153,11 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !submitting && !extracting && !readingFile) onClose();
+      if (event.key === 'Escape' && !submitting && !extracting) onClose();
     };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [onClose, submitting, extracting, readingFile]);
+  }, [onClose, submitting, extracting]);
 
   const handleFileChange = async (file: File | undefined) => {
     clearUpload();
@@ -187,44 +175,35 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
       return;
     }
 
-    try {
-      setReadingFile(true);
-      setExtractionStatus('Reading assignment file…');
-      const documentBase64 = arrayBufferToBase64(await file.arrayBuffer());
-      setUpload({
-        file_name: file.name,
-        media_type: file.type,
-        document_base64: documentBase64,
-      });
-      setExtractionStatus(`${file.name} is ready. Select Extract suggestions to continue.`);
-    } catch {
-      clearUpload();
-      setExtractionError('Unable to read the assignment file. Choose it again and retry.');
-      setExtractionStatus('');
-    } finally {
-      setReadingFile(false);
-    }
+    setUpload({ file });
+    setExtractionStatus(`${file.name} is ready for private upload. Select Extract suggestions to continue.`);
   };
 
   const extractSuggestions = async () => {
     if (!upload || extracting) return;
 
-    const request: TaskExtractionRequest = {
-      ...upload,
-      locale: navigator.language || 'en',
-    };
-
     setExtracting(true);
     setExtraction(null);
     setExtractionError('');
-    setExtractionStatus('Extracting suggestions…');
-    clearUpload();
+    setExtractionStatus('Uploading assignment securely to Amazon S3…');
 
+    let objectKey: string | null = null;
     try {
+      objectKey = await uploadTemporaryMedia(upload.file, 'assignment_import');
+      const request: TaskExtractionRequest = {
+        file_name: upload.file.name,
+        media_type: upload.file.type,
+        object_key: objectKey,
+        locale: navigator.language || 'en',
+      };
+      clearUpload();
+      setExtractionStatus('Extracting suggestions…');
       const response = await taskExtractionsApi.extract(request);
+      objectKey = null;
       setExtraction(response.data.data);
-      setExtractionStatus('Suggestions are ready for review. Nothing has been saved or applied.');
+      setExtractionStatus('Suggestions are ready for review. The temporary S3 file has been deleted.');
     } catch {
+      if (objectKey) void discardTemporaryMedia(objectKey, 'assignment_import').catch(() => {});
       setExtractionError('Unable to extract suggestions. Choose the file again and retry.');
       setExtractionStatus('');
     } finally {
@@ -329,7 +308,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
           <h2 id="task-form-title" className="text-xl font-semibold">
             {task ? 'Edit Task' : 'Create Task'}
           </h2>
-          <button type="button" onClick={handleClose} disabled={submitting || extracting || readingFile} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60" aria-label="Close task form">
+          <button type="button" onClick={handleClose} disabled={submitting || extracting} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60" aria-label="Close task form">
             <X size={20} />
           </button>
         </div>
@@ -342,7 +321,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
               <div>
                 <h3 id="assignment-import-title" className="font-semibold text-gray-900">Import an assignment</h3>
                 <p id="assignment-file-help" className="mt-1 text-sm text-gray-700">
-                  Choose one JPG, JPEG, PNG, PDF, or TIFF file up to 4 MiB. The file is sent only after you select Extract suggestions.
+                  Choose one JPG, JPEG, PNG, PDF, or TIFF file up to 4 MiB. It is uploaded privately to Amazon S3 only after you select Extract suggestions, then deleted after processing.
                 </p>
               </div>
 
@@ -353,7 +332,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
                   id="assignment-file"
                   type="file"
                   accept={fileAccept}
-                  disabled={readingFile || extracting}
+                  disabled={extracting}
                   aria-describedby="assignment-file-help extraction-status"
                   className="block w-full rounded-lg border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:border-0 file:bg-primary-100 file:px-4 file:py-2 file:font-medium file:text-primary-800 hover:file:bg-primary-200 disabled:cursor-not-allowed disabled:opacity-60"
                   onChange={(event) => void handleFileChange(event.target.files?.[0])}
@@ -364,7 +343,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
                 <button
                   type="button"
                   className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!upload || readingFile || extracting}
+                  disabled={!upload || extracting}
                   onClick={() => void extractSuggestions()}
                 >
                   {extracting ? 'Extracting…' : 'Extract suggestions'}
@@ -494,8 +473,8 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
           </label>
 
           <div className="flex justify-end gap-3 border-t pt-5">
-            <button type="button" className="btn-secondary" onClick={handleClose} disabled={submitting || extracting || readingFile}>Cancel</button>
-            <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60" disabled={submitting || extracting || readingFile}>
+            <button type="button" className="btn-secondary" onClick={handleClose} disabled={submitting || extracting}>Cancel</button>
+            <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60" disabled={submitting || extracting}>
               {submitting ? 'Saving…' : task ? 'Save Changes' : 'Create Task'}
             </button>
           </div>

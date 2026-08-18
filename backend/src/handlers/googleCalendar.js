@@ -300,6 +300,16 @@ async function authorize(event, profile) {
   });
 }
 
+async function cancelOAuth(event, body) {
+  if (!hasRecentAuthentication(event)) return recentAuthenticationError();
+  if (typeof body.state !== 'string' || !/^calendar\.[A-Za-z0-9_-]{43}$/.test(body.state)) {
+    return error('Invalid or expired Calendar OAuth state', 400);
+  }
+  const consumedState = await consumeState(getUserId(event), body.state);
+  if (!consumedState) return error('Invalid or expired Calendar OAuth state', 400);
+  return success({ cancelled: true });
+}
+
 async function callback(event, body) {
   if (!hasRecentAuthentication(event)) return recentAuthenticationError();
   if (typeof body.code !== 'string' || !body.code.trim() || body.code.length > 4096) return error('A valid OAuth code is required', 400);
@@ -399,6 +409,7 @@ exports.update = async (event) => {
     switch (body.action) {
       case 'authorize': return await authorize(event, profile);
       case 'callback': return await callback(event, body);
+      case 'oauthCancel': return await cancelOAuth(event, body);
       case 'sync': return await syncNow(event, profile);
       case 'disable': return await disable(event, profile);
       default: return error('Invalid Calendar action', 400);

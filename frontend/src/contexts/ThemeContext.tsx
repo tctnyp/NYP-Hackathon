@@ -1,4 +1,6 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { resolveBackground } from '../services/media';
+import { tokenStorage } from '../services/cognitoAuth';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 type ResolvedTheme = Exclude<ThemePreference, 'system'>;
@@ -7,6 +9,7 @@ export type BackgroundKind = 'default' | 'solid' | 'gradient' | 'image';
 export interface BackgroundPreference {
   kind: BackgroundKind;
   value: string;
+  media_key?: string;
 }
 
 interface ThemeContextValue {
@@ -37,7 +40,15 @@ function isSafeBackground(background: BackgroundPreference) {
   if (background.kind === 'gradient') {
     return /^linear-gradient\(\d{1,3}deg,\s*#[0-9a-f]{6},\s*#[0-9a-f]{6}\)$/i.test(background.value);
   }
-  return background.kind === 'image' && /^data:image\/(png|jpeg|webp|gif);base64,/i.test(background.value);
+  if (background.kind !== 'image' || typeof background.media_key !== 'string') return false;
+  if (!/^media\/[a-f0-9]{40}\/background\/[A-Za-z0-9_.-]+$/.test(background.media_key)) return false;
+  if (!background.value) return true;
+  try {
+    const url = new URL(background.value);
+    return url.protocol === 'https:' && (url.hostname === 'amazonaws.com' || url.hostname.endsWith('.amazonaws.com'));
+  } catch {
+    return false;
+  }
 }
 
 function storedBackground(): BackgroundPreference {
@@ -84,6 +95,35 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   useEffect(() => {
+    if (background.kind !== 'image' || !background.media_key || !tokenStorage.getIdToken()) return undefined;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const media = await resolveBackground(background.media_key!);
+        if (!cancelled) {
+          setBackgroundState((current) => current.media_key === background.media_key
+            ? { ...current, value: media.access_url }
+            : current);
+        }
+      } catch {
+        if (!cancelled) setBackgroundState(DEFAULT_BACKGROUND);
+      }
+    };
+    void refresh();
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    const timer = window.setInterval(() => void refresh(), 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+    };
+  }, [background.kind, background.media_key]);
+  useEffect(() => {
     document.documentElement.style.setProperty('--app-background', cssBackground(background, resolvedTheme));
     document.documentElement.dataset.background = background.kind;
   }, [background, resolvedTheme]);
@@ -102,7 +142,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         if (nextBackground.kind === 'default') {
           window.localStorage.removeItem(BACKGROUND_STORAGE_KEY);
         } else {
-          window.localStorage.setItem(BACKGROUND_STORAGE_KEY, JSON.stringify(nextBackground));
+          const stored = nextBackground.kind === 'image'
+            ? { ...nextBackground, value: '' }
+            : nextBackground;
+          window.localStorage.setItem(BACKGROUND_STORAGE_KEY, JSON.stringify(stored));
         }
         setBackgroundState(nextBackground);
       } catch (error) {

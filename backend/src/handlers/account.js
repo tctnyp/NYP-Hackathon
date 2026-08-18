@@ -22,6 +22,12 @@ const {
   getUserName,
   parseBody,
 } = require('../utils/response');
+const {
+  MediaError,
+  deleteOwnedMedia,
+  promoteUpload,
+  signedMediaUrl,
+} = require('../utils/mediaStorage');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION || 'us-east-1' });
 const USER_POOL_ID = process.env.USER_POOL_ID;
@@ -134,9 +140,10 @@ function cognitoDestinationUser(event) {
   };
 }
 
-function publicProfile(profile, event) {
+async function publicProfile(profile, event) {
   if (!profile) return null;
 
+  const profilePictureKey = profile.profile_picture_key;
   const result = { ...profile };
   for (const field of INTERNAL_FIELDS) delete result[field];
 
@@ -147,11 +154,18 @@ function publicProfile(profile, event) {
   if (!result.display_name) {
     result.display_name = result.full_name || claimName || claimEmail?.split('@')[0] || 'User';
   }
-  if (!result.profile_picture) result.profile_picture = null;
+  if (profilePictureKey) {
+    try {
+      result.profile_picture = (await signedMediaUrl(getUserId(event), profilePictureKey, 'profile_photo')).url;
+    } catch (mediaError) {
+      console.error('Profile picture access failed', { category: String(mediaError?.name || 'MediaError').slice(0, 64) });
+      result.profile_picture = null;
+    }
+  } else if (!result.profile_picture) {
+    result.profile_picture = null;
+  }
   return result;
-}
-
-function publicConnection(connection, fallback = {}) {
+}function publicConnection(connection, fallback = {}) {
   if (!connection) return { connected: false };
 
   return {
@@ -169,7 +183,7 @@ function isProviderConfigured(provider) {
   return Boolean(config.clientId && config.clientSecret && config.redirectUri);
 }
 
-function accountData(event, profile) {
+async function accountData(event, profile) {
   const claimGoogleIdentity = googleIdentity(event);
   const googleOrigin = isGoogleOrigin(event);
   const claimGoogleConnected = Boolean(claimGoogleIdentity) || googleOrigin;
@@ -195,7 +209,7 @@ function accountData(event, profile) {
     : (claimDiscordConnected ? publicConnection({ connected_at: null }, claimDiscordFallback) : { connected: false });
 
   return {
-    profile: publicProfile(profile, event),
+    profile: await publicProfile(profile, event),
     connections: {
       google: {
         ...google,
@@ -252,45 +266,16 @@ function validateTextField(value, field, maxLength) {
   return null;
 }
 
-function isValidImageSignature(mimeType, bytes) {
-  if (mimeType === 'png') {
-    return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  }
-  if (mimeType === 'jpeg') {
-    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  }
-  if (mimeType === 'webp') {
-    return bytes.length >= 12
-      && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
-      && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
-  }
-  return false;
-}
-
-function validateProfilePicture(value) {
+function validateProfileUploadKey(value) {
   if (value === null) return null;
-  if (typeof value !== 'string') return 'profile_picture must be a data URL or null';
-  if (value.length > MAX_PROFILE_PICTURE_LENGTH) {
-    return 'profile_picture must be 200KB or smaller';
-  }
-
-  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
-  if (!match) return 'profile_picture must be a base64 png, jpeg, or webp data URL';
-
-  const payload = match[2];
-  if (payload.length % 4 !== 0) return 'profile_picture contains invalid base64 data';
-  const bytes = Buffer.from(payload, 'base64');
-  if (!bytes.length || bytes.toString('base64') !== payload) {
-    return 'profile_picture contains invalid base64 data';
-  }
-  if (!isValidImageSignature(match[1], bytes)) {
-    return 'profile_picture content does not match its image type';
+  if (typeof value !== 'string' || value.length > 512 || !/^uploads\/[a-f0-9]{40}\/profile_photo\/[A-Za-z0-9_.-]+$/.test(value)) {
+    return 'profile_picture_upload_key must reference a completed profile photo upload or be null';
   }
   return null;
 }
 
 function validateProfileUpdate(body) {
-  const allowed = new Set(['display_name', 'full_name', 'profile_picture']);
+  const allowed = new Set(['display_name', 'full_name', 'profile_picture_upload_key', 'profile_picture']);
   const fields = Object.keys(body);
   const unsupported = fields.filter((field) => !allowed.has(field));
   if (unsupported.length) return `Unsupported profile field: ${unsupported[0]}`;
@@ -305,7 +290,11 @@ function validateProfileUpdate(body) {
     if (validationError) return validationError;
   }
   if (Object.hasOwn(body, 'profile_picture')) {
-    return validateProfilePicture(body.profile_picture);
+    if (Object.hasOwn(body, 'profile_picture_upload_key')) return 'Specify only profile_picture_upload_key';
+    if (body.profile_picture !== null) return 'profile_picture is no longer accepted; upload the resized photo first';
+  }
+  if (Object.hasOwn(body, 'profile_picture_upload_key')) {
+    return validateProfileUploadKey(body.profile_picture_upload_key);
   }
   return null;
 }
@@ -643,13 +632,43 @@ async function oauthAuthorize(event, body, profile) {
   });
 
   return success({
-    ...accountData(event, profile),
+    ...(await accountData(event, profile)),
     provider,
     authorization_url: authorizationUrl(provider, config, state),
     expires_at: new Date(expiresAt * 1000).toISOString(),
   });
 }
 
+async function oauthCancel(event, body) {
+  if (!hasRecentAuthentication(event)) return recentAuthenticationError();
+  if (typeof body.state !== 'string' || body.state.length > 512) return error('A valid OAuth state is required', 400);
+  const separator = body.state.indexOf('.');
+  const provider = normalizeProvider(separator > 0 ? body.state.slice(0, separator) : null);
+  if (!provider) return error('Invalid or expired OAuth state', 400);
+  const consumed = await consumeState(getUserId(event), provider, body.state);
+  if (!consumed?.link_generation) return error('Invalid or expired OAuth state', 400);
+  return error(`${provider === 'google' ? 'Google' : 'Discord'} authorization was cancelled`, 400);
+}
+
+const DEFINITIVE_LINK_FAILURES = new Set([
+  'AccessDeniedException',
+  'AliasExistsException',
+  'InvalidParameterException',
+  'NotAuthorizedException',
+  'ResourceConflictException',
+  'UserNotFoundException',
+]);
+
+function publicLinkFailure(provider, callbackError) {
+  const label = provider === 'google' ? 'Google' : 'Discord';
+  if (['AliasExistsException', 'InvalidParameterException', 'ResourceConflictException'].includes(callbackError?.name)) {
+    return new ProviderError(`This ${label} identity already has a separate sign-in profile or cannot be linked. Accounts are not automatically merged.`, 409);
+  }
+  if (['AccessDeniedException', 'NotAuthorizedException', 'UserNotFoundException'].includes(callbackError?.name)) {
+    return new ProviderError(`${label} account linking is temporarily unavailable. Please contact support.`, 503);
+  }
+  return callbackError;
+}
 async function oauthCallback(event, body) {
   if (!hasRecentAuthentication(event)) return recentAuthenticationError();
   if (typeof body.code !== 'string' || !body.code.trim() || body.code.length > 4096) {
@@ -695,17 +714,16 @@ async function oauthCallback(event, body) {
       ...(provider === 'discord' ? { cognito_linked: cognitoLinkRequired } : {}),
     };
     const updatedProfile = await saveConnection(userId, provider, finalizedConnection, consumedState.link_generation);
-    return success(accountData(event, updatedProfile));
+    return success(await accountData(event, updatedProfile));
   } catch (callbackError) {
-    const definitiveLinkFailure = cognitoLinkInFlight
-      && ['AliasExistsException', 'InvalidParameterException', 'ResourceConflictException'].includes(callbackError.name);
+    const definitiveLinkFailure = cognitoLinkInFlight && DEFINITIVE_LINK_FAILURES.has(callbackError?.name);
     await releaseLinkOperation(
       userId,
       provider,
       consumedState.link_generation,
       definitiveLinkFailure ? stagedProviderUserId : null,
     );
-    throw callbackError;
+    throw publicLinkFailure(provider, callbackError);
   }
 }
 
@@ -821,7 +839,7 @@ async function disconnect(event, body, profile) {
   }
 
   const updatedProfile = await removeConnection(userId, provider);
-  return success(accountData(event, updatedProfile));
+  return success(await accountData(event, updatedProfile));
 }
 
 exports.getProfile = async (event) => {
@@ -830,7 +848,7 @@ exports.getProfile = async (event) => {
     if (!userId) return error('Unauthorized', 401);
 
     const profile = await getItem(USERS_TABLE, { user_id: userId });
-    return success(accountData(event, profile));
+    return success(await accountData(event, profile));
   } catch (err) {
     console.error('Account retrieval failed:', err.message);
     return error('Failed to retrieve account', 500);
@@ -855,6 +873,8 @@ exports.upsertProfile = async (event) => {
           return await oauthAuthorize(event, body, profile);
         case 'oauthCallback':
           return await oauthCallback(event, body);
+        case 'oauthCancel':
+          return await oauthCancel(event, body);
         case 'disconnect':
           return await disconnect(event, body, profile);
         case 'completeOnboarding': {
@@ -879,7 +899,7 @@ exports.upsertProfile = async (event) => {
             },
             ReturnValues: 'ALL_NEW',
           }));
-          return success(accountData(event, updateResponse.Attributes));
+          return success(await accountData(event, updateResponse.Attributes));
         }
         default:
           return error('Invalid action', 400);
@@ -890,20 +910,43 @@ exports.upsertProfile = async (event) => {
     if (validationError) return error(validationError, 400);
 
     const now = timestamp();
+    const oldPictureKey = profile?.profile_picture_key || null;
+    let nextPictureKey = oldPictureKey;
+    let promotedPictureKey = null;
+    const requestedPicture = Object.hasOwn(body, 'profile_picture_upload_key')
+      ? body.profile_picture_upload_key
+      : (Object.hasOwn(body, 'profile_picture') && body.profile_picture === null ? null : undefined);
+    if (typeof requestedPicture === 'string') {
+      const promoted = await promoteUpload(userId, requestedPicture, 'profile_photo');
+      promotedPictureKey = promoted.objectKey;
+      nextPictureKey = promoted.objectKey;
+    } else if (requestedPicture === null) {
+      nextPictureKey = null;
+    }
+
+    const { profile_picture: _legacyPicture, profile_picture_key: _oldPictureKey, ...profileWithoutPicture } = baseProfile(event, profile);
     const updatedProfile = {
-      ...baseProfile(event, profile),
+      ...profileWithoutPicture,
       ...(Object.hasOwn(body, 'display_name') ? { display_name: body.display_name.trim() } : {}),
       ...(Object.hasOwn(body, 'full_name') ? { full_name: body.full_name.trim() } : {}),
-      ...(Object.hasOwn(body, 'profile_picture') ? { profile_picture: body.profile_picture } : {}),
+      ...(nextPictureKey ? { profile_picture_key: nextPictureKey } : {}),
       updated_at: now,
     };
-    await putItem(USERS_TABLE, updatedProfile);
-    return success(accountData(event, updatedProfile));
+    try {
+      await putItem(USERS_TABLE, updatedProfile);
+    } catch (writeError) {
+      if (promotedPictureKey) await deleteOwnedMedia(userId, promotedPictureKey, 'profile_photo', true).catch(() => {});
+      throw writeError;
+    }
+    if (oldPictureKey && oldPictureKey !== nextPictureKey) {
+      await deleteOwnedMedia(userId, oldPictureKey, 'profile_photo', true).catch(() => {});
+    }
+    return success(await accountData(event, updatedProfile));
   } catch (err) {
     console.error('Account update failed:', err.message);
-    if (err instanceof ProviderError) return error(err.message, err.statusCode);
+    if (err instanceof ProviderError || err instanceof MediaError) return error(err.message, err.statusCode);
     if (['AliasExistsException', 'InvalidParameterException', 'ResourceConflictException'].includes(err.name)) {
-      return error('The Google account is already linked or cannot be linked', 409);
+      return error('The selected identity already has a separate sign-in profile or cannot be linked', 409);
     }
     return error('Failed to update account', 500);
   }

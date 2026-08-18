@@ -28,6 +28,8 @@ https://<frontend-origin>/account/settings
 
 The first serves Cognito Hosted UI sign-in/signup. The second is `GoogleOAuthRedirectUri` for authenticated Account Settings linking. Supply `GoogleOAuthClientId` and `GoogleOAuthClientSecret` through deployment parameters. Cognito maps the provider's verified identity into the user pool.
 
+Google sign-in and authenticated account linking are separate flows. The externally supplied Lambda role must allow `cognito-idp:AdminLinkProviderForUser` and `cognito-idp:AdminDisableProviderForUser` on the deployed user pool. Keep the Cognito native user as `DestinationUser` and Google `Cognito_Subject` as `SourceUser`; reversing them breaks linking. If a Google identity already created a standalone federated Cognito profile, the application returns an actionable conflict and does not automatically delete or merge either profile because doing so could orphan application data.
+
 ## Discord login and signup
 
 Discord exposes OAuth 2.0 but not the OpenID Connect discovery, JWKS, ID-token, and userinfo contract required by Cognito. This project therefore includes a minimal OIDC bridge in `backend/src/handlers/discordOidc.js`.
@@ -147,7 +149,7 @@ The preference is available again in Account Settings. If persistent browser sto
 
 
 
-This AWS Academy stack uses the externally supplied `LabRoleArn`. Before every Calendar deployment, validate its documented DynamoDB, stream, SQS, Cognito, and CloudWatch Logs contract without printing secrets:
+This AWS Academy stack uses the externally supplied `LabRoleArn`. Before every deployment, validate its documented DynamoDB, stream, SQS, Cognito, S3 object, Textract, SES, and CloudWatch Logs contract without printing secrets. In addition to the Calendar permissions checked by the script, account linking requires `cognito-idp:AdminLinkProviderForUser` and `cognito-idp:AdminDisableProviderForUser`; private media handling requires `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, and `s3:DeleteObject` on the stack's media-bucket objects. The template bucket policy grants only these object operations to `LabRoleArn`, denies insecure transport, and blocks all public access.
 
 ```powershell
 .\backend\scripts\validate-calendar-role.ps1 -RoleArn <lab-role-arn> -AccountId <account-id> -Region us-east-1 -Environment prod

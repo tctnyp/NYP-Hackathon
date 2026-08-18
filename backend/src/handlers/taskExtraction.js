@@ -1,5 +1,6 @@
 const { TextractClient, AnalyzeDocumentCommand } = require('@aws-sdk/client-textract');
 const { success, error, getUserId, parseBody } = require('../utils/response');
+const { MediaError, deleteOwnedMedia, validateObject } = require('../utils/mediaStorage');
 
 const textractClient = new TextractClient({ region: process.env.REGION || process.env.AWS_REGION });
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -34,36 +35,25 @@ function apiError(message, statusCode) {
 
 function validateRequest(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { response: apiError('Invalid JSON body', 400) };
-  const { file_name: fileName, media_type: mediaType, document_base64: base64, locale } = body;
+  const { file_name: fileName, media_type: mediaType, object_key: objectKey, locale } = body;
   if (typeof fileName !== 'string' || !fileName.trim() || fileName.length > 255
-    || typeof mediaType !== 'string' || typeof base64 !== 'string' || !base64) {
-    return { response: apiError('file_name, media_type and document_base64 are required', 400) };
+    || typeof mediaType !== 'string' || typeof objectKey !== 'string' || !objectKey) {
+    return { response: apiError('file_name, media_type and object_key are required', 400) };
   }
   if (locale !== undefined && (typeof locale !== 'string' || locale.length > 35)) {
     return { response: apiError('locale must be a valid locale string', 400) };
   }
-  const format = MEDIA[mediaType.toLowerCase()];
+  const normalizedMediaType = mediaType.toLowerCase();
+  const format = MEDIA[normalizedMediaType];
   const extension = fileName.trim().toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
   if (!format || !extension || !format.extensions.includes(extension)) {
     return { response: apiError('Unsupported document type', 415) };
   }
-  if (base64.length > MAX_BASE64_LENGTH || base64.length % 4 !== 0) {
-    return { response: apiError(base64.length > MAX_BASE64_LENGTH ? 'Document exceeds the 4 MiB limit' : 'document_base64 must be plain canonical base64', base64.length > MAX_BASE64_LENGTH ? 413 : 400) };
+  if (objectKey.length > 512 || !/^uploads\/[a-f0-9]{40}\/assignment_import\/[A-Za-z0-9_.-]+$/.test(objectKey)) {
+    return { response: apiError('Invalid assignment upload reference', 400) };
   }
-  if (/[^A-Za-z0-9+/=]/.test(base64) || !/^(?:[^=]*)(?:={0,2})$/.test(base64)) {
-    return { response: apiError('document_base64 must be plain canonical base64', 400) };
-  }
-  const padding = base64.endsWith('==') ? 2 : (base64.endsWith('=') ? 1 : 0);
-  const decodedLength = (base64.length / 4) * 3 - padding;
-  if (decodedLength > MAX_BYTES) return { response: apiError('Document exceeds the 4 MiB limit', 413) };
-  const bytes = Buffer.from(base64, 'base64');
-  if (!bytes.length || bytes.length > MAX_BYTES) return { response: apiError(bytes.length ? 'Document exceeds the 4 MiB limit' : 'Document is empty', bytes.length ? 413 : 400) };
-  if (bytes.toString('base64') !== base64) return { response: apiError('document_base64 must be plain canonical base64', 400) };
-  if (!format.magic(bytes)) return { response: apiError('Document content does not match media_type', 415) };
-  return { bytes, locale: locale || '' };
-}
-
-function textForBlock(block, byId, depth = 0) {
+  return { objectKey, fileName: fileName.trim(), mediaType: normalizedMediaType, locale: locale || '' };
+}function textForBlock(block, byId, depth = 0) {
   if (!block || depth > 2) return '';
   const ids = (block.Relationships || []).filter((r) => r.Type === 'CHILD').flatMap((r) => r.Ids || []).slice(0, 100);
   return ids.map((id) => byId.get(id)).filter(Boolean).map((child) => {
@@ -213,17 +203,32 @@ exports.handler = async (event) => {
   if (!userId) return apiError('Unauthorized', 401);
   const validated = validateRequest(parseBody(event));
   if (validated.response) return validated.response;
+
+  let uploaded;
   try {
+    uploaded = await validateObject(userId, validated.objectKey, 'assignment_import', false);
+    if (uploaded.mediaType !== validated.mediaType) return apiError('Document content type does not match the upload', 415);
     const result = await textractClient.send(new AnalyzeDocumentCommand({
-      Document: { Bytes: validated.bytes },
+      Document: {
+        S3Object: {
+          Bucket: process.env.MEDIA_BUCKET,
+          Name: uploaded.key,
+          ...(uploaded.versionId ? { Version: uploaded.versionId } : {}),
+        },
+      },
       FeatureTypes: ['FORMS'],
     }));
     return success(parseTextract(result, validated.locale));
   } catch (err) {
+    if (err instanceof MediaError) return apiError(err.message, err.statusCode);
     if (err?.statusCode && err?.publicMessage) return apiError(err.publicMessage, err.statusCode);
     console.error('Task extraction failed', { category: String(err?.name || 'ServiceError').slice(0, 64) });
     return serviceError(err);
+  } finally {
+    if (uploaded?.key) {
+      await deleteOwnedMedia(userId, uploaded.key, 'assignment_import', false).catch(() => {});
+    }
   }
 };
 
-exports._test = { MAX_BYTES, normalizeDeadline, parseTextract, validateRequest };
+exports._test = { normalizeDeadline, parseTextract, validateRequest };

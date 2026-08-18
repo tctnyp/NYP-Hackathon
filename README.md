@@ -8,7 +8,8 @@ Academic Tasks is a responsive academic workload manager for deadlines, assignme
 
 - Task creation, editing, filtering, progress tracking, and deadline management
 - Module organization and dashboard summaries
-- User-reviewed task-field suggestions from a single-page JPEG, PNG, PDF, or TIFF through protected Amazon Textract analysis
+- User-reviewed task-field suggestions from a single-page JPEG, PNG, PDF, or TIFF uploaded temporarily to private Amazon S3 and analyzed through protected Amazon Textract
+- Resized profile photos and custom backgrounds in owner-scoped private S3 storage with short-lived signed access URLs
 - Google Calendar as the default calendar action, with phone/ICS and Microsoft Outlook fallbacks
 - Explicit Google-linked Calendar auto-sync with encrypted server-side credentials and durable task updates
 - Installable Progressive Web App with offline app-shell support
@@ -37,7 +38,9 @@ database/                  Reference schemas and sample data
 
 ## Service boundaries
 
-The regional API Gateway REST API uses a Cognito authorizer for protected application routes. `POST /task-extractions` accepts only a single-page JPEG, PNG, PDF, or TIFF up to 4 MiB, invokes synchronous Textract `AnalyzeDocument` with `FORMS`, and returns deterministic suggestions for explicit review/apply in the task form. It uses no S3 or document persistence.
+The regional API Gateway REST API uses a Cognito authorizer for protected application routes. Browser-selected files have an absolute ceiling of 100 MiB minus one byte, with stricter purpose limits: resized profile derivatives up to 1 MiB, resized backgrounds up to 5 MiB, and assignment imports up to 4 MiB. The browser obtains a five-minute checksum-bound presigned POST for an exact owner-hashed key; S3 policy conditions bind content type, SHA-256 checksum, owner/purpose metadata, AES256 encryption, and content length. The bucket blocks public access and signed GET URLs are short-lived.
+
+`POST /task-extractions` accepts only an owner-scoped temporary S3 key for a single-page JPEG, PNG, PDF, or TIFF, invokes synchronous Textract `AnalyzeDocument` with `FORMS`, and returns deterministic suggestions for explicit review/apply. The temporary object is deleted after processing or failure, with a one-day S3 lifecycle as a final cleanup backstop. Profile and background objects are promoted to durable owner-scoped keys; only those keys—not signed URLs—are persisted.
 
 Private reminders are addressed directly to one user's profile email through SES rather than broadcast through SNS. A legacy SNS topic may remain for infrastructure compatibility, but it is not the private notification transport. SES requires a verified source identity and, while the account is in the SES sandbox, compliant verified recipients. The externally supplied LabRole must permit `ses:SendEmail` and `textract:AnalyzeDocument` in addition to the application's existing service actions.
 

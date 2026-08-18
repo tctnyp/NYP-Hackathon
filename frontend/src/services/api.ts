@@ -131,7 +131,7 @@ export const dashboardApi = {
 export interface TaskExtractionRequest {
   file_name: string;
   media_type: string;
-  document_base64: string;
+  object_key: string;
   locale: string;
 }
 
@@ -187,7 +187,7 @@ type AccountApiResponse = { data: AccountApiData };
 
 export const accountApi = {
   get: () => apiClient.get<AccountApiResponse>('/account'),
-  updateProfile: (profile: Pick<AccountApiProfile, 'display_name' | 'full_name' | 'profile_picture'>) => (
+  updateProfile: (profile: { display_name: string; full_name: string; profile_picture_upload_key?: string | null }) => (
     apiClient.put<AccountApiResponse>('/account', profile)
   ),
   completeOnboarding: (version: number) => (
@@ -198,6 +198,9 @@ export const accountApi = {
   ),
   oauthCallback: (code: string, state: string) => (
     apiClient.put<AccountApiResponse>('/account', { action: 'oauthCallback', code, state })
+  ),
+  oauthCancel: (state: string) => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'oauthCancel', state })
   ),
   disconnect: (provider: 'google' | 'discord') => (
     apiClient.put<AccountApiResponse>('/account', { action: 'disconnect', provider })
@@ -229,6 +232,9 @@ export const googleCalendarApi = {
   authorize: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'authorize' }),
   callback: (code: string, state: string) => (
     apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'callback', code, state })
+  ),
+  oauthCancel: (state: string) => (
+    apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'oauthCancel', state })
   ),
   sync: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'sync' }),
   disable: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'disable' }),

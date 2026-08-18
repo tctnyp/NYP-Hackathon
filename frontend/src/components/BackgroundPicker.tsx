@@ -1,6 +1,8 @@
 import { ChangeEvent, useState } from 'react';
 import { ImagePlus, RotateCcw } from 'lucide-react';
 import { BackgroundPreference, useTheme } from '../contexts/ThemeContext';
+import { deleteBackground, uploadBackground } from '../services/media';
+import { resizeBackgroundImage } from '../utils/imageResize';
 
 const presets: Array<BackgroundPreference & { name: string }> = [
   { name: 'Default', kind: 'default', value: '' },
@@ -19,33 +21,38 @@ function BackgroundPicker() {
   const [gradientStart, setGradientStart] = useState('#dbeafe');
   const [gradientEnd, setGradientEnd] = useState('#e9d5ff');
   const [uploadError, setUploadError] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   const isActive = (preset: BackgroundPreference) => (
     preset.kind === background.kind && preset.value === background.value
   );
 
-  const uploadImage = (event: ChangeEvent<HTMLInputElement>) => {
+  const setNonImageBackground = (next: BackgroundPreference) => {
+    if (background.kind === 'image' && background.media_key) {
+      void deleteBackground(background.media_key).catch(() => {});
+    }
+    setBackground(next);
+  };
+
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     setUploadError('');
     if (!file) return;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
-      setUploadError('Choose a PNG, JPG, WebP, or GIF image.');
-      return;
-    }
-    if (file.size > 1_500_000) {
-      setUploadError('Use an image smaller than 1.5 MB.');
-      return;
-    }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setBackground({ kind: 'image', value: reader.result });
+    setUploading(true);
+    try {
+      const resized = await resizeBackgroundImage(file);
+      const stored = await uploadBackground(resized);
+      if (background.kind === 'image' && background.media_key) {
+        void deleteBackground(background.media_key).catch(() => {});
       }
-    };
-    reader.onerror = () => setUploadError('Unable to read that image.');
-    reader.readAsDataURL(file);
+      setBackground({ kind: 'image', value: stored.access_url, media_key: stored.object_key });
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Unable to upload that background image.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -59,7 +66,7 @@ function BackgroundPicker() {
               type="button"
               className={isActive(preset) ? 'background-swatch background-swatch-active' : 'background-swatch'}
               style={{ background: preset.kind === 'default' ? 'var(--app-bg)' : preset.value }}
-              onClick={() => setBackground({ kind: preset.kind, value: preset.value })}
+              onClick={() => setNonImageBackground({ kind: preset.kind, value: preset.value })}
               title={preset.name}
               aria-label={`${preset.name} background`}
               aria-pressed={isActive(preset)}
@@ -78,7 +85,7 @@ function BackgroundPicker() {
             value={solidColor}
             onChange={(event) => {
               setSolidColor(event.target.value);
-              setBackground({ kind: 'solid', value: event.target.value });
+              setNonImageBackground({ kind: 'solid', value: event.target.value });
             }}
             aria-label="Custom solid background color"
           />
@@ -101,13 +108,14 @@ function BackgroundPicker() {
 
       <div className="flex flex-wrap gap-2">
         <label className="appearance-upload">
-          <ImagePlus size={17} /> Custom image
-          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="sr-only" onChange={uploadImage} />
+          {uploading ? <ImagePlus className="animate-pulse" size={17} /> : <ImagePlus size={17} />} {uploading ? 'Resizing and uploading…' : 'Custom image'}
+          <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" disabled={uploading} onChange={(event) => void uploadImage(event)} />
         </label>
-        <button type="button" className="appearance-upload" onClick={() => setBackground({ kind: 'default', value: '' })}>
+        <button type="button" className="appearance-upload" onClick={() => setNonImageBackground({ kind: 'default', value: '' })}>
           <RotateCcw size={16} /> Reset
         </button>
       </div>
+      <p className="text-xs text-gray-500">Images under 100 MiB are resized to fit 2560×1440 and stored privately in Amazon S3.</p>
       {uploadError && <p className="text-xs font-medium text-red-600" role="alert">{uploadError}</p>}
     </div>
   );
