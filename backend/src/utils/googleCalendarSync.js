@@ -170,7 +170,7 @@ function taskDescription(task) {
   return [
     typeof task.description === 'string' ? task.description.trim() : '',
     `Type: ${String(task.task_type || 'other').replace('_', ' ')}`,
-    `Difficulty: ${String(task.difficulty || 'medium').replace('_', ' ')}`,
+    `Priority: ${String(task.priority || ({ easy: 'low', medium: 'medium', hard: 'high', very_hard: 'urgent' }[task.difficulty]) || 'medium').replace('_', ' ')}`,
     `Progress: ${Number(task.progress_percentage || 0)}%`,
   ].filter(Boolean).join('\n');
 }

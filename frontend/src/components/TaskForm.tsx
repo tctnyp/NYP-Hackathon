@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { taskExtractionsApi } from '../services/api';
 import type { TaskExtractionData, TaskExtractionFields, TaskExtractionRequest } from '../services/api';
-import type { Module, Task, TaskDifficulty, TaskStatus, TaskType } from '../types/api';
+import type { Module, Task, TaskPriority, TaskStatus, TaskType } from '../types/api';
 
 interface TaskFormProps {
   task?: Task;
@@ -22,7 +22,7 @@ interface FormState {
   moduleId: string;
   estimatedHours: string;
   gradeWeight: string;
-  difficulty: TaskDifficulty;
+  priority: TaskPriority;
   isGroupWork: boolean;
   status: TaskStatus;
   progressPercentage: string;
@@ -42,7 +42,7 @@ const taskTypes: TaskType[] = [
   'other',
 ];
 
-const difficulties: TaskDifficulty[] = ['easy', 'medium', 'hard', 'very_hard'];
+const priorities: TaskPriority[] = ['urgent', 'important', 'high', 'medium', 'low'];
 const editableStatuses: TaskStatus[] = ['not_started', 'in_progress', 'completed', 'overdue'];
 const acceptedMediaTypes = new Set(['image/jpeg', 'image/png', 'application/pdf', 'image/tiff']);
 const maximumFileSize = 4 * 1024 * 1024;
@@ -133,7 +133,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
     moduleId: task?.module_id || '',
     estimatedHours: task?.estimated_hours?.toString() || '',
     gradeWeight: task?.grade_weight?.toString() || '',
-    difficulty: task?.difficulty || 'medium',
+    priority: task?.priority || 'medium',
     isGroupWork: task?.is_group_work || false,
     status: task?.status || 'not_started',
     progressPercentage: task?.progress_percentage?.toString() || '0',
@@ -303,7 +303,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
       module_id: form.moduleId || null,
       estimated_hours: form.estimatedHours ? Number(form.estimatedHours) : null,
       grade_weight: form.gradeWeight ? Number(form.gradeWeight) : null,
-      difficulty: form.difficulty,
+      priority: form.priority,
       is_group_work: form.isGroupWork,
     };
 
@@ -455,9 +455,9 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
               {modulesError && <p className="mt-1.5 text-xs text-amber-700" role="status">{modulesError}</p>}
             </div>
             <div>
-              <label htmlFor="task-difficulty" className="mb-1 block text-sm font-medium text-gray-700">Difficulty</label>
-              <select id="task-difficulty" className="input-field capitalize" value={form.difficulty} onChange={(event) => updateForm('difficulty', event.target.value as TaskDifficulty)}>
-                {difficulties.map((difficulty) => <option key={difficulty} value={difficulty}>{difficulty.replace('_', ' ')}</option>)}
+              <label htmlFor="task-priority" className="mb-1 block text-sm font-medium text-gray-700">Priority</label>
+              <select id="task-priority" className="input-field capitalize" value={form.priority} onChange={(event) => updateForm('priority', event.target.value as TaskPriority)}>
+                {priorities.map((priority) => <option key={priority} value={priority}>{priority.replace('_', ' ')}</option>)}
               </select>
             </div>
           </div>

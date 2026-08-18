@@ -1,7 +1,7 @@
 // Task Types
 export type TaskStatus = 'not_started' | 'in_progress' | 'completed' | 'overdue';
 export type TaskType = 'assignment' | 'test' | 'exam' | 'project' | 'presentation' | 'report' | 'competition' | 'other';
-export type TaskDifficulty = 'easy' | 'medium' | 'hard' | 'very_hard';
+export type TaskPriority = 'urgent' | 'important' | 'high' | 'medium' | 'low';
 export type UrgencyLevel = 'overdue' | 'critical' | 'urgent' | 'upcoming' | 'future';
 
 export interface Task {
@@ -14,7 +14,7 @@ export interface Task {
   deadline: string;
   estimated_hours?: number;
   grade_weight?: number;
-  difficulty: TaskDifficulty;
+  priority: TaskPriority;
   is_group_work: boolean;
   status: TaskStatus;
   progress_percentage: number;

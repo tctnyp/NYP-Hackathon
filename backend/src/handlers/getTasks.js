@@ -1,5 +1,6 @@
-const { queryItems, TASKS_TABLE } = require('../utils/database');
+const { queryItems } = require('../utils/database');
 const { success, error, getUserId } = require('../utils/response');
+const { withNormalizedPriority } = require('../utils/taskPriority');
 
 /**
  * GET /tasks
@@ -22,9 +23,7 @@ exports.handler = async (event) => {
 
     let tasks = [];
 
-    // Use appropriate GSI based on filters
     if (status) {
-      // Query by status using GSI3
       tasks = await queryItems({
         IndexName: 'GSI3-TasksByStatus',
         KeyConditionExpression: 'GSI3PK = :pk',
@@ -33,7 +32,6 @@ exports.handler = async (event) => {
         },
       });
     } else if (module_id) {
-      // Query by module using GSI2
       tasks = await queryItems({
         IndexName: 'GSI2-TasksByModule',
         KeyConditionExpression: 'GSI2PK = :pk',
@@ -42,7 +40,6 @@ exports.handler = async (event) => {
         },
       });
     } else if (sort_by === 'deadline') {
-      // Query by deadline using GSI1
       tasks = await queryItems({
         IndexName: 'GSI1-TasksByDeadline',
         KeyConditionExpression: 'GSI1PK = :pk',
@@ -51,7 +48,6 @@ exports.handler = async (event) => {
         },
       });
     } else {
-      // Default: get all tasks for user
       tasks = await queryItems({
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
         ExpressionAttributeValues: {
@@ -61,14 +57,13 @@ exports.handler = async (event) => {
       });
     }
 
-    // Filter by task_type if provided
     if (task_type) {
-      tasks = tasks.filter(t => t.task_type === task_type);
+      tasks = tasks.filter((task) => task.task_type === task_type);
     }
 
-    // Enrich tasks with calculated fields
     const now = new Date();
-    const enrichedTasks = tasks.map(task => {
+    const enrichedTasks = tasks.map((storedTask) => {
+      const task = withNormalizedPriority(storedTask);
       const deadline = new Date(task.deadline);
       const hoursUntilDeadline = (deadline - now) / (1000 * 60 * 60);
       const daysUntilDeadline = hoursUntilDeadline / 24;
@@ -91,7 +86,6 @@ exports.handler = async (event) => {
       };
     });
 
-    // Sort if needed (client-side sorting for non-indexed fields)
     if (sort_by === 'priority_score') {
       enrichedTasks.sort((a, b) => (b.priority_score || 0) - (a.priority_score || 0));
     } else if (sort_by === 'title') {

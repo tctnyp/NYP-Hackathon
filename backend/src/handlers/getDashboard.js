@@ -1,5 +1,6 @@
-const { queryItems, TASKS_TABLE } = require('../utils/database');
+const { queryItems } = require('../utils/database');
 const { success, error, getUserId } = require('../utils/response');
+const { withNormalizedPriority } = require('../utils/taskPriority');
 
 /**
  * GET /dashboard
@@ -12,14 +13,15 @@ exports.handler = async (event) => {
       return error('Unauthorized', 401);
     }
 
-    // Get all tasks for user
-    const allTasks = await queryItems({
+    // Get and normalize all tasks so legacy difficulty records expose priority.
+    const storedTasks = await queryItems({
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
       ExpressionAttributeValues: {
         ':pk': `USER#${userId}`,
         ':sk': 'TASK#',
       },
     });
+    const allTasks = storedTasks.map(withNormalizedPriority);
 
     const now = new Date();
     

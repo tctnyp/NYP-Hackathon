@@ -31,7 +31,7 @@ const task = {
   title: 'Secure systems assignment',
   description: 'Finish the threat model',
   task_type: 'assignment',
-  difficulty: 'hard',
+  priority: 'high',
   progress_percentage: 25,
   estimated_hours: 2,
   deadline: '2026-09-01T10:00:00.000Z',

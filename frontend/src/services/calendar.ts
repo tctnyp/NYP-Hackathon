@@ -27,7 +27,7 @@ function taskDescription(task: Task) {
   const details = [
     task.description?.trim(),
     `Type: ${task.task_type.replace('_', ' ')}`,
-    `Difficulty: ${task.difficulty.replace('_', ' ')}`,
+    `Priority: ${task.priority.replace('_', ' ')}`,
     `Progress: ${task.progress_percentage}%`,
   ];
   return details.filter(Boolean).join('\n');

@@ -35,7 +35,7 @@ CREATE TABLE tasks (
     deadline DATETIME NOT NULL,
     estimated_hours DECIMAL(5,2),
     grade_weight DECIMAL(5,2),
-    difficulty ENUM('easy', 'medium', 'hard', 'very_hard') DEFAULT 'medium',
+    priority ENUM('urgent', 'important', 'high', 'medium', 'low') DEFAULT 'medium',
     is_group_work BOOLEAN DEFAULT FALSE,
     status ENUM('not_started', 'in_progress', 'completed', 'overdue') DEFAULT 'not_started',
     progress_percentage INT DEFAULT 0,
@@ -105,19 +105,21 @@ BEGIN
     DECLARE v_importance_score DECIMAL(5,2);
     DECLARE v_effort_score DECIMAL(5,2);
     DECLARE v_final_score DECIMAL(5,2);
+    DECLARE v_priority_multiplier DECIMAL(3,2);
     
     SELECT 
         TIMESTAMPDIFF(HOUR, NOW(), deadline) / 24.0,
         COALESCE(grade_weight, 10),
         COALESCE(estimated_hours, 5),
-        CASE difficulty
-            WHEN 'easy' THEN 1
+        CASE priority
+            WHEN 'urgent' THEN 3
+            WHEN 'important' THEN 2.5
+            WHEN 'high' THEN 2
             WHEN 'medium' THEN 1.5
-            WHEN 'hard' THEN 2
-            WHEN 'very_hard' THEN 2.5
-            ELSE 1
+            WHEN 'low' THEN 1
+            ELSE 1.5
         END
-    INTO v_days_until_deadline, v_importance_score, v_effort_score, v_urgency_score
+    INTO v_days_until_deadline, v_importance_score, v_effort_score, v_priority_multiplier
     FROM tasks
     WHERE task_id = p_task_id;
     
@@ -141,7 +143,7 @@ BEGIN
     SET v_effort_score = v_effort_score * 0.5;
     
     -- Final weighted score
-    SET v_final_score = (v_urgency_score * 0.5) + (v_importance_score * 0.3) + (v_effort_score * 0.2);
+    SET v_final_score = ((v_urgency_score * 0.5) + (v_importance_score * 0.3) + (v_effort_score * 0.2)) * v_priority_multiplier;
     
     UPDATE tasks
     SET priority_score = v_final_score
