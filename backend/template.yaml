@@ -32,6 +32,44 @@ Parameters:
     Type: String
     Default: https://nypxaws.tancheetiong.com/account/settings
     Description: Authenticated SPA route that completes Google account linking
+  EnableGoogleCalendarSync:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Explicitly enable separate Google Calendar consent and synchronization
+  GoogleCalendarOAuthClientId:
+    Type: String
+    Default: ''
+    Description: OAuth client ID used only for explicit Google Calendar consent
+  GoogleCalendarOAuthClientSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: OAuth client secret used only by Google Calendar synchronization Lambdas
+  GoogleCalendarOAuthRedirectUri:
+    Type: String
+    Default: https://nypxaws.tancheetiong.com/account/settings
+    AllowedPattern: '^https://\S+/account/settings$|^http://localhost(:[0-9]+)?/account/settings$'
+    Description: Authenticated SPA route that completes Google Calendar consent
+  GoogleCalendarEncryptionKeyBase64:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[A-Za-z0-9+/]{43}=$'
+    ConstraintDescription: Must be empty or canonical base64 encoding of exactly 32 bytes
+    Description: Random 32-byte base64 key for application-layer AES-256-GCM refresh-token encryption
+  GoogleCalendarPreviousEncryptionKeyBase64:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[A-Za-z0-9+/]{43}=$'
+    ConstraintDescription: Must be empty or canonical base64 encoding of exactly 32 bytes
+    Description: Previous Calendar credential key retained during two-phase rotation; clear only after credentials are reauthorized or migrated
+  GoogleCalendarRevokeOnDisable:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Revoke the Google grant on disable only when Calendar uses a dedicated Google Cloud project
   DiscordOAuthClientId:
     Type: String
     Default: ''
@@ -44,6 +82,8 @@ Parameters:
   DiscordOAuthRedirectUri:
     Type: String
     Default: https://nypxaws.tancheetiong.com/account/settings
+    AllowedPattern: '^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/account/settings$'
+    ConstraintDescription: Must be an HTTPS origin followed by /account/settings
     Description: Frontend handoff used by Discord account linking and OIDC login
   DiscordOIDCClientId:
     Type: String
@@ -58,10 +98,14 @@ Parameters:
     Type: String
     Default: ''
     NoEcho: true
+    AllowedPattern: '^$|^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$'
+    ConstraintDescription: Must be empty or canonical standard base64
     Description: Base64-encoded PKCS8 RSA private key used to sign OIDC ID tokens
   DiscordOIDCKeyId:
     Type: String
     Default: discord-oidc-1
+    AllowedPattern: '^[A-Za-z0-9._-]{1,64}$'
+    ConstraintDescription: Must contain 1-64 safe JWKS key identifier characters
     Description: Public key identifier exposed by the bridge JWKS endpoint
   DiscordOIDCScopes:
     Type: String
@@ -85,6 +129,12 @@ Conditions:
   HasGoogleOAuth: !And
     - !Not [!Equals [!Ref GoogleOAuthClientId, '']]
     - !Not [!Equals [!Ref GoogleOAuthClientSecret, '']]
+  HasGoogleCalendarSync: !And
+    - !Equals [!Ref EnableGoogleCalendarSync, 'true']
+    - !Not [!Equals [!Ref GoogleCalendarOAuthClientId, '']]
+    - !Not [!Equals [!Ref GoogleCalendarOAuthClientSecret, '']]
+    - !Not [!Equals [!Ref GoogleCalendarOAuthRedirectUri, '']]
+    - !Not [!Equals [!Ref GoogleCalendarEncryptionKeyBase64, '']]
   HasDiscordBridgeConfiguration: !And
     - !Not [!Equals [!Ref DiscordOAuthClientId, '']]
     - !Not [!Equals [!Ref DiscordOAuthClientSecret, '']]
@@ -108,9 +158,11 @@ Globals:
     Environment:
       Variables:
         REGION: !Ref AWS::Region
+        ENVIRONMENT: !Ref Environment
         ADMIN_USERNAME: !Ref AdminUsername
         TASKS_TABLE: !Ref TasksTable
         USERS_TABLE: !Ref UsersTable
+        CALENDAR_CONNECTIONS_TABLE: !Ref GoogleCalendarConnectionsTable
         ORGANIZATIONS_TABLE: !Ref OrganizationsTable
         SCHOOLS_TABLE: !Ref SchoolsTable
         CLASSES_TABLE: !Ref ClassesTable
@@ -309,6 +361,8 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
       Tags:
         - { Key: Project, Value: academic-task-manager }
         - { Key: Environment, Value: !Ref Environment }
@@ -330,6 +384,25 @@ Resources:
           Projection: { ProjectionType: ALL }
       Tags:
         - { Key: Project, Value: academic-task-manager }
+
+  GoogleCalendarConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub academic-google-calendar-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: user_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: user_id, KeyType: HASH }
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+        - { Key: Purpose, Value: encrypted-google-calendar-credentials }
 
   DiscordOIDCSessionsTable:
     Type: AWS::DynamoDB::Table
@@ -396,6 +469,33 @@ Resources:
         - { AttributeName: class_id, KeyType: RANGE }
       Tags:
         - { Key: Project, Value: academic-task-manager }
+
+  GoogleCalendarSyncFailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub academic-google-calendar-sync-failures-${Environment}
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - { Key: Project, Value: academic-task-manager }
+        - { Key: Purpose, Value: google-calendar-sync-failure-replay }
+
+  GoogleCalendarSyncFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub academic-google-calendar-sync-failures-${Environment}
+      AlarmDescription: Calendar stream records exhausted automatic Lambda retries and require replay
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt GoogleCalendarSyncFailureQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
 
   ReminderTopic:
     Type: AWS::SNS::Topic
@@ -522,6 +622,90 @@ Resources:
         ApiEvent:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: DELETE }
+
+  GetGoogleCalendarStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/googleCalendar.getStatus
+      Environment:
+        Variables:
+          GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
+          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !Ref GoogleCalendarOAuthClientId
+          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /calendar/google, Method: GET }
+
+  UpdateGoogleCalendarFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/googleCalendar.update
+      Timeout: 30
+      Environment:
+        Variables:
+          GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
+          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !Ref GoogleCalendarOAuthClientId
+          GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !Ref GoogleCalendarOAuthClientSecret
+          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
+          GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarEncryptionKeyBase64
+          GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarPreviousEncryptionKeyBase64
+          GOOGLE_CALENDAR_REVOKE_ON_DISABLE: !Ref GoogleCalendarRevokeOnDisable
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /calendar/google, Method: PUT }
+
+  GoogleCalendarSyncWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/googleCalendarWorker.handler
+      Timeout: 120
+      EventInvokeConfig:
+        MaximumEventAgeInSeconds: 3600
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination: !GetAtt GoogleCalendarSyncFailureQueue.Arn
+      Environment:
+        Variables:
+          GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
+          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !Ref GoogleCalendarOAuthClientId
+          GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !Ref GoogleCalendarOAuthClientSecret
+          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
+          GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarEncryptionKeyBase64
+          GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarPreviousEncryptionKeyBase64
+          GOOGLE_CALENDAR_REVOKE_ON_DISABLE: !Ref GoogleCalendarRevokeOnDisable
+      Events:
+        TaskChanges:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt TasksTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            MaximumRetryAttempts: 5
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+            DestinationConfig:
+              OnFailure:
+                Type: SQS
+                Destination: !GetAtt GoogleCalendarSyncFailureQueue.Arn
+            FilterCriteria:
+              Filters:
+                - Pattern: '{ "dynamodb": { "NewImage": { "entity_type": { "S": ["TASK"] } } } }'
+                - Pattern: '{ "dynamodb": { "OldImage": { "entity_type": { "S": ["TASK"] } } } }'
+        ScheduledReconciliation:
+          Type: Schedule
+          Properties:
+            Name: !Sub academic-google-calendar-reconcile-${Environment}
+            Description: Repair Google Calendar task events and retry pending disable cleanup
+            Schedule: rate(1 minute)
+            Enabled: true
 
   GetModulesFunction:
     Type: AWS::Serverless::Function
@@ -717,6 +901,13 @@ Outputs:
   GoogleOAuthEnabled:
     Description: Whether Google OAuth is configured
     Value: !If [HasGoogleOAuth, 'true', 'false']
+  GoogleCalendarSyncEnabled:
+    Description: Whether separate Google Calendar synchronization is fully configured
+    Value: !If [HasGoogleCalendarSync, 'true', 'false']
+  GoogleCalendarConnectionsTableName:
+    Value: !Ref GoogleCalendarConnectionsTable
+  GoogleCalendarSyncFailureQueueUrl:
+    Value: !Ref GoogleCalendarSyncFailureQueue
   DiscordOIDCIssuerUrl:
     Description: Public issuer URL for the self-hosted Discord OIDC bridge
     Value: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/oidc/discord

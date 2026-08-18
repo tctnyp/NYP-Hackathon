@@ -109,3 +109,56 @@ The first successful Discord Hosted UI flow creates the federated Cognito user; 
 ## Local callback
 
 The template allows `http://localhost:3000/auth/callback`. A local Discord bridge test also requires a Discord redirect registered for the local Account Settings handoff and a matching `FrontendUrl`; do not reuse production bridge secrets in local environments.
+
+
+## Google Calendar synchronization
+
+Google sign-in/account linking and Google Calendar authorization are separate capabilities. Cognito continues to request only `openid profile email`. Calendar scope is requested only when a Google-linked user explicitly selects **Enable auto-sync** in Account Settings.
+
+The Calendar OAuth web client must allow:
+
+```text
+https://<frontend-origin>/account/settings
+```
+
+Enable the Google Calendar API for that Google Cloud project. Supply these protected SAM parameters:
+
+- `EnableGoogleCalendarSync=true`
+- `GoogleCalendarOAuthClientId`
+- `GoogleCalendarOAuthClientSecret`
+- `GoogleCalendarOAuthRedirectUri`
+- `GoogleCalendarEncryptionKeyBase64` — exactly 32 cryptographically random bytes encoded as canonical base64
+- `GoogleCalendarPreviousEncryptionKeyBase64` — normally empty; during rotation retain the former key here until all credentials are reauthorized or migrated
+- `GoogleCalendarRevokeOnDisable` — keep `false` when the Google project is also used for sign-in; set `true` only for a dedicated Calendar project because Google revocation can remove project-wide grants
+
+Generate encryption values outside the repository and pass them only through the protected deployment channel. Never put them in `.env`, frontend variables, source control, command logs, or deployment archives. Rotate in two deployments: first move the old current key to `GoogleCalendarPreviousEncryptionKeyBase64` while installing the new current key; clear the previous key only after credentials have been reauthorized or migrated. If neither retained key can authenticate a cleanup credential, the backend enters `cleanup_reauthorization_required` rather than retrying forever.
+
+This AWS Academy stack uses the externally supplied `LabRoleArn`. Before every Calendar deployment, validate its documented DynamoDB, stream, SQS, Cognito, and CloudWatch Logs contract without printing secrets:
+
+```powershell
+.\backend\scripts\validate-calendar-role.ps1 -RoleArn <lab-role-arn> -AccountId <account-id> -Region us-east-1 -Environment prod
+```
+
+Deployment must stop if any simulator result is not `allowed`. The Calendar connection table is retained on stack deletion/replacement and has point-in-time recovery enabled because it contains the only cleanup tombstones.
+
+### Consent and credential lifecycle
+
+- Authorization uses a separate `calendar.*` state, a user/purpose-bound SHA-256 state hash, a 10-minute expiry, and atomic one-time consumption.
+- The flow requests `calendar.events` with `access_type=offline`, explicit consent, and incremental authorization.
+- The callback requires recent Cognito authentication, a linked Google identity, the same verified email and Google subject, the exact Calendar scope, and a refresh credential.
+- Refresh credentials are encrypted with AES-256-GCM using a fresh 96-bit IV and user/purpose/version AAD before storage in the isolated Calendar connections table.
+- Access tokens exist only in Lambda memory and are never returned to the browser or persisted.
+- Read APIs return only safe status fields; the credential table is never serialized as an account profile.
+
+### Event ownership and automatic updates
+
+- Google Calendar is the default manual calendar action; ICS and Outlook remain available.
+- Event IDs are deterministic SHA-256-derived Google-compatible identifiers scoped to environment, user, and task.
+- Private extended properties mark the owning application, user hash, and task ID. Existing events are updated or deleted only after ownership verification.
+- DynamoDB Streams deliver task create/update/delete changes to the Calendar worker. Per-item stream ordering, sequence-number partial-batch retries, and an encrypted terminal-failure queue prevent transient or exhausted failures from being silently lost.
+- A one-minute scheduled reconciliation scans a bounded raw connection-table page, selects at most one active user, and advances one task/event item. The cursor advances only after successful work; failed scheduled invocations are retried and retained in the encrypted failure queue.
+- Consent callbacks, manual sync, and disable return `202 Accepted` after durable state changes. Provider reconciliation runs in the worker, keeping authenticated API requests below integration timeout budgets.
+- Disabling sync first removes app-managed events in bounded pages. Credentials remain encrypted in `disable_pending` state if cleanup is incomplete. If Google authorization or a retained decryption key is unavailable, a `cleanup_reauthorization_required` tombstone keeps Google unlink blocked until the user reauthorizes only to finish removal.
+- Google identity unlink atomically marks a non-primary link `unlinking`, invalidates pending identity OAuth state, and proves the Calendar row is absent in the same DynamoDB transaction. Calendar credential activation uses a conflicting transaction conditioned on the same active link, closing callback/unlink races.
+
+Deployments are false-by-default: incomplete Calendar parameters or `EnableGoogleCalendarSync=false` keep the consent control unavailable. No Calendar permission is added to normal Google login/signup.

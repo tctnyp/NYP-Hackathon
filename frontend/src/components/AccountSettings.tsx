@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, Save, Sun, Upload, UserRound, X } from 'lucide-react';
+import { CalendarClock, Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, RefreshCw, Save, Sun, Upload, UserRound, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionProvider, useAccount } from '../contexts/AccountContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,9 +43,14 @@ function AccountSettings() {
     connect,
     completeOAuth,
     disconnect,
+    calendar_sync: calendarSync,
+    enableCalendarSync,
+    syncCalendarNow,
+    disableCalendarSync,
+    refreshAccount,
     isConnected,
   } = useAccount();
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [displayName, setDisplayName] = useState('');
   const [fullName, setFullName] = useState('');
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
@@ -61,6 +66,9 @@ function AccountSettings() {
   const [connectionBusy, setConnectionBusy] = useState<ConnectionProvider | 'callback' | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('');
+  const [calendarBusy, setCalendarBusy] = useState<'enable' | 'sync' | 'disable' | null>(null);
+  const [calendarError, setCalendarError] = useState('');
+  const [calendarMessage, setCalendarMessage] = useState('');
   const callbackStarted = useRef(false);
 
   useEffect(() => {
@@ -92,8 +100,14 @@ function AccountSettings() {
     setConnectionBusy('callback');
     setConnectionError('');
     void completeOAuth(code, state)
-      .then(() => setConnectionMessage('Account connected successfully.'))
-      .catch((callbackError) => setConnectionError(messageFrom(callbackError)))
+      .then(() => {
+        if (state.startsWith('calendar.')) setCalendarMessage('Google Calendar authorization completed.');
+        else setConnectionMessage('Account connected successfully.');
+      })
+      .catch((callbackError) => {
+        if (state.startsWith('calendar.')) setCalendarError(messageFrom(callbackError));
+        else setConnectionError(messageFrom(callbackError));
+      })
       .finally(() => {
         setConnectionBusy(null);
         navigate('/account/settings', { replace: true });
@@ -207,6 +221,33 @@ function AccountSettings() {
     }
   };
 
+  const handleCalendarAction = async (action: 'enable' | 'sync' | 'disable') => {
+    setCalendarBusy(action);
+    setCalendarError('');
+    setCalendarMessage('');
+    try {
+      if (action === 'enable') {
+        await enableCalendarSync();
+      } else if (action === 'sync') {
+        await syncCalendarNow();
+        setCalendarMessage('Google Calendar synchronization requested. Updates will be processed shortly.');
+      } else {
+        await disableCalendarSync();
+        setCalendarMessage('Calendar cleanup started. Managed events and credentials will be removed before Google can be unlinked.');
+      }
+    } catch (requestError) {
+      setCalendarError(messageFrom(requestError));
+      try {
+        await refreshAccount();
+      } catch {
+        // Preserve the original Calendar action error when status refresh also fails.
+      }
+      setCalendarBusy(null);
+    } finally {
+      if (action !== 'enable') setCalendarBusy(null);
+    }
+  };
+
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -286,22 +327,17 @@ function AccountSettings() {
       <section className="card" aria-labelledby="connections-heading">
         <div className="mb-5">
           <h2 id="connections-heading" className="text-lg font-semibold">Connected accounts</h2>
-          <p className="text-sm text-gray-500">Provider authorization is exchanged server-side; access and refresh tokens are never stored.</p>
+          <p className="text-sm text-gray-500">Identity-linking tokens are exchanged server-side and are not retained. Calendar permission is managed separately below.</p>
         </div>
         <div className="divide-y divide-gray-200">
           {providers.map((provider) => {
             const connected = isConnected(provider.id);
             const connection = connections[provider.id];
             const details = typeof connection === 'object' ? connection : undefined;
-            const available = details?.available === true;
             const disconnectAllowed = details?.disconnect_allowed !== false;
             const busy = connectionBusy === provider.id || connectionBusy === 'callback';
-            const actionDisabled = busy || (connected ? !disconnectAllowed : !available);
-            const actionLabel = busy
-              ? 'Working…'
-              : connected
-                ? (disconnectAllowed ? 'Disconnect' : 'Primary sign-in')
-                : (available ? 'Connect' : 'Setup required');
+            const actionDisabled = busy || (connected && !disconnectAllowed);
+            const actionLabel = busy ? 'Working…' : connected ? 'Unlink' : 'Link';
             const Icon = provider.icon;
             return (
               <div key={provider.id} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center">
@@ -331,6 +367,73 @@ function AccountSettings() {
         </div>
         {connectionError && <p className="mt-4 text-sm font-medium text-red-600" role="alert">{connectionError}</p>}
         {connectionMessage && <p className="mt-4 text-sm font-medium text-green-700" role="status">{connectionMessage}</p>}
+      </section>
+
+      <section className="card" aria-labelledby="calendar-sync-heading">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
+              <CalendarClock size={22} />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="calendar-sync-heading" className="text-lg font-semibold">Google Calendar auto-sync</h2>
+                <span className={calendarSync.enabled
+                  ? 'rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700'
+                  : calendarSync.status === 'cleanup_reauthorization_required'
+                    ? 'rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700'
+                    : 'rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600'}>
+                  {calendarSync.enabled
+                    ? 'On'
+                    : calendarSync.status === 'cleanup_reauthorization_required'
+                      ? 'Cleanup needs authorization'
+                      : calendarSync.status === 'disable_pending'
+                        ? 'Cleanup pending'
+                        : 'Off'}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-gray-500">
+                With your explicit consent, task deadlines are created, updated, and removed automatically. Calendar permission is separate from Google sign-in.
+              </p>
+              {calendarSync.calendar_email && <p className="mt-2 text-sm text-gray-600">Calendar: {calendarSync.calendar_email}</p>}
+              {calendarSync.last_sync_at && <p className="mt-1 text-xs text-gray-500">Last synced {new Date(calendarSync.last_sync_at).toLocaleString()}</p>}
+              {calendarSync.last_error && <p className="mt-1 text-xs font-medium text-amber-700">Attention required: {calendarSync.last_error.replace(/_/g, ' ')}</p>}
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {!calendarSync.enabled ? (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!calendarSync.linked || !calendarSync.available || calendarBusy !== null || calendarSync.status === 'disable_pending'}
+                onClick={() => void handleCalendarAction('enable')}
+              >
+                {calendarBusy === 'enable'
+                  ? 'Opening Google…'
+                  : !calendarSync.linked
+                    ? 'Link Google first'
+                    : !calendarSync.available
+                      ? 'Setup required'
+                      : calendarSync.status === 'cleanup_reauthorization_required'
+                        ? 'Reauthorize cleanup'
+                        : 'Enable auto-sync'}
+              </button>
+            ) : (
+              <>
+                <button type="button" className="btn-secondary flex items-center gap-2" disabled={calendarBusy !== null} onClick={() => void handleCalendarAction('sync')}>
+                  <RefreshCw className={calendarBusy === 'sync' ? 'animate-spin' : ''} size={17} /> Sync now
+                </button>
+                <button type="button" className="btn-secondary text-red-600" disabled={calendarBusy !== null} onClick={() => void handleCalendarAction('disable')}>
+                  {calendarBusy === 'disable' ? 'Removing…' : 'Disable'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        {!calendarSync.linked && <p className="mt-4 text-sm text-gray-500">Connect Google above before requesting Calendar permission.</p>}
+        <p className="mt-3 text-xs text-gray-500">Refresh credentials are encrypted server-side and are never returned to this browser. Only events managed by this app are modified.</p>
+        {calendarError && <p className="mt-3 text-sm font-medium text-red-600" role="alert">{calendarError}</p>}
+        {calendarMessage && <p className="mt-3 text-sm font-medium text-green-700" role="status">{calendarMessage}</p>}
       </section>
 
       {passwordChangeAvailable && (
@@ -365,6 +468,12 @@ function AccountSettings() {
         <div className="mb-5">
           <h2 id="appearance-heading" className="text-lg font-semibold">Appearance</h2>
           <p className="text-sm text-gray-500">Theme and background preferences are saved on this device.</p>
+        </div>
+        <div className="mb-2 flex max-w-sm items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Color theme</p>
+          <p className="text-xs font-semibold text-gray-600" role="status" aria-live="polite">
+            Using {resolvedTheme === 'dark' ? 'Dark' : 'Light'} mode
+          </p>
         </div>
         <div className="theme-picker mb-6 max-w-sm" role="group" aria-label="Color theme">
           {themeOptions.map((option) => {

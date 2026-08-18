@@ -140,3 +140,33 @@ export const accountApi = {
     apiClient.put<AccountApiResponse>('/account', { action: 'disconnect', provider })
   ),
 };
+
+
+export interface GoogleCalendarSyncStatus {
+  linked: boolean;
+  available: boolean;
+  enabled: boolean;
+  status: 'disabled' | 'enabled' | 'disable_pending' | 'reauthorization_required' | string;
+  calendar_email?: string;
+  last_sync_at?: string;
+  last_attempt_at?: string;
+  last_error?: string | null;
+}
+
+type CalendarApiResponse = {
+  data: {
+    calendar_sync: GoogleCalendarSyncStatus;
+    authorization_url?: string;
+    expires_at?: string;
+  };
+};
+
+export const googleCalendarApi = {
+  get: () => apiClient.get<CalendarApiResponse>('/calendar/google'),
+  authorize: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'authorize' }),
+  callback: (code: string, state: string) => (
+    apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'callback', code, state })
+  ),
+  sync: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'sync' }),
+  disable: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'disable' }),
+};

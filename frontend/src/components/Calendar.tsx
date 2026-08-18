@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Download, RefreshCw } from 'lucide-react';
+import { CalendarDays, Download, ExternalLink, RefreshCw, Settings } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { tasksApi } from '../services/api';
+import { useAccount } from '../contexts/AccountContext';
 import { exportTasksToIcs } from '../services/calendar';
 import type { Task } from '../types/api';
 import CalendarActions from './CalendarActions';
 
 function Calendar() {
+  const { calendar_sync: calendarSync } = useAccount();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -37,16 +40,42 @@ function Calendar() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Calendar</h1>
-          <p className="mt-1 text-sm text-gray-500">Add deadlines to your phone, Google Calendar, or Microsoft Outlook.</p>
+          <p className="mt-1 text-sm text-gray-500">Google Calendar is the default. You can also export deadlines to any calendar app.</p>
         </div>
-        <button
-          type="button"
-          className="btn-primary flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={agenda.length === 0}
-          onClick={() => exportTasksToIcs(agenda)}
-        >
-          <Download size={19} /> Export all (.ics)
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn-secondary flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={agenda.length === 0}
+            onClick={() => exportTasksToIcs(agenda)}
+          >
+            <Download size={18} /> Export .ics
+          </button>
+          <a
+            className="btn-primary flex items-center justify-center gap-2"
+            href="https://calendar.google.com/calendar/u/0/r"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <CalendarDays size={19} /> Open Google Calendar <ExternalLink size={15} />
+          </a>
+        </div>
+      </div>
+
+      <div className="app-surface flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-semibold">Automatic Google Calendar updates</p>
+          <p className="text-sm text-gray-500">
+            {calendarSync.enabled
+              ? 'On — task changes are synchronized automatically.'
+              : calendarSync.linked
+                ? 'Google is linked. Enable separate Calendar permission to synchronize automatically.'
+                : 'Link Google in Account Settings to enable optional automatic synchronization.'}
+          </p>
+        </div>
+        <Link className="btn-secondary flex shrink-0 items-center justify-center gap-2" to="/account/settings">
+          <Settings size={17} /> {calendarSync.enabled ? 'Sync settings' : 'Set up sync'}
+        </Link>
       </div>
 
       {error && (
