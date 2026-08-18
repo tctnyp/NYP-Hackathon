@@ -118,6 +118,15 @@ Parameters:
     Default: 'false'
     AllowedValues: ['true', 'false']
     Description: Explicitly enable the Cognito Discord provider after bridge discovery and JWKS are reachable
+  ManageSocialInfrastructure:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Create social identity providers and the Discord OIDC session table, or reuse pre-existing production resources
+  ExternalDiscordOIDCSessionsTableName:
+    Type: String
+    Default: ''
+    Description: Existing Discord OIDC session table name required when social infrastructure is externally managed
   CognitoFromEmail:
     Type: String
     Default: noreply@tancheetiong.com
@@ -149,6 +158,9 @@ Conditions:
     - !Condition HasDiscordBridgeConfiguration
     - !Equals [!Ref EnableDiscordCognito, 'true']
   HasCustomEmailSender: !Not [!Equals [!Ref CognitoEmailSourceArn, '']]
+  ManageSocialInfrastructureResources: !Equals [!Ref ManageSocialInfrastructure, 'true']
+  CreateGoogleIdentityProvider: !And [!Condition ManageSocialInfrastructureResources, !Condition HasGoogleOAuth]
+  CreateDiscordIdentityProvider: !And [!Condition ManageSocialInfrastructureResources, !Condition HasDiscordOIDC]
   IsProduction: !Equals [!Ref Environment, prod]
 
 Globals:
@@ -334,8 +346,8 @@ Resources:
         - http://localhost:3000
       SupportedIdentityProviders:
         - COGNITO
-        - !If [HasGoogleOAuth, !Ref GoogleIdentityProvider, !Ref 'AWS::NoValue']
-        - !If [HasDiscordOIDC, !Ref DiscordIdentityProvider, !Ref 'AWS::NoValue']
+        - !If [HasGoogleOAuth, !If [ManageSocialInfrastructureResources, !Ref GoogleIdentityProvider, Google], !Ref 'AWS::NoValue']
+        - !If [HasDiscordOIDC, !If [ManageSocialInfrastructureResources, !Ref DiscordIdentityProvider, Discord], !Ref 'AWS::NoValue']
       AllowedOAuthFlowsUserPoolClient: true
       PreventUserExistenceErrors: ENABLED
       RefreshTokenValidity: 30
@@ -362,7 +374,7 @@ Resources:
 
   GoogleIdentityProvider:
     Type: AWS::Cognito::UserPoolIdentityProvider
-    Condition: HasGoogleOAuth
+    Condition: CreateGoogleIdentityProvider
     Properties:
       UserPoolId: !Ref UserPool
       ProviderName: Google
@@ -377,7 +389,7 @@ Resources:
 
   DiscordIdentityProvider:
     Type: AWS::Cognito::UserPoolIdentityProvider
-    Condition: HasDiscordOIDC
+    Condition: CreateDiscordIdentityProvider
     Properties:
       UserPoolId: !Ref UserPool
       ProviderName: Discord
@@ -515,6 +527,7 @@ Resources:
         - { Key: DataClassification, Value: collaborative-user-content }
   DiscordOIDCSessionsTable:
     Type: AWS::DynamoDB::Table
+    Condition: ManageSocialInfrastructureResources
     Properties:
       TableName: !Sub academic-discord-oidc-${Environment}
       BillingMode: PAY_PER_REQUEST
@@ -638,7 +651,7 @@ Resources:
       Handler: handlers/discordOidc.handler
       Environment:
         Variables:
-          DISCORD_OIDC_TABLE: !Ref DiscordOIDCSessionsTable
+          DISCORD_OIDC_TABLE: !If [ManageSocialInfrastructureResources, !Ref DiscordOIDCSessionsTable, !Ref ExternalDiscordOIDCSessionsTableName]
           DISCORD_OIDC_CLIENT_ID: !Ref DiscordOIDCClientId
           DISCORD_OIDC_CLIENT_SECRET: !Ref DiscordOIDCClientSecret
           DISCORD_OIDC_PRIVATE_KEY_BASE64: !Ref DiscordOIDCPrivateKeyBase64
