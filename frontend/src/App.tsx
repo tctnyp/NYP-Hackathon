@@ -24,8 +24,8 @@ import LoginStoragePrompt from './components/LoginStorageConsent';
 function App() {
   return (
     <ThemeProvider>
-      <PwaProvider>
-        <AuthProvider>
+      <AuthProvider>
+        <PwaProvider>
           <AccountProvider>
             <Router>
             <Routes>
@@ -65,8 +65,8 @@ function App() {
             </Router>
             <LoginStoragePrompt />
           </AccountProvider>
-        </AuthProvider>
-      </PwaProvider>
+        </PwaProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

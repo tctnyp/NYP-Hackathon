@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { taskExtractionsApi } from '../services/api';
 import type { TaskExtractionData, TaskExtractionFields, TaskExtractionRequest } from '../services/api';
@@ -7,7 +7,9 @@ import type { Module, Task, TaskDifficulty, TaskStatus, TaskType } from '../type
 interface TaskFormProps {
   task?: Task;
   modules: Module[];
+  modulesError?: string;
   submitting: boolean;
+  error?: string;
   onClose: () => void;
   onSubmit: (data: Partial<Task>) => Promise<void>;
 }
@@ -41,7 +43,7 @@ const taskTypes: TaskType[] = [
 ];
 
 const difficulties: TaskDifficulty[] = ['easy', 'medium', 'hard', 'very_hard'];
-const editableStatuses: TaskStatus[] = ['not_started', 'in_progress', 'completed'];
+const editableStatuses: TaskStatus[] = ['not_started', 'in_progress', 'completed', 'overdue'];
 const acceptedMediaTypes = new Set(['image/jpeg', 'image/png', 'application/pdf', 'image/tiff']);
 const maximumFileSize = 4 * 1024 * 1024;
 const fileAccept = '.jpg,.jpeg,.png,.pdf,.tif,.tiff,image/jpeg,image/png,application/pdf,image/tiff';
@@ -122,7 +124,7 @@ function formatConfidence(confidence: number) {
   return `${Math.round(boundedConfidence)}% confidence`;
 }
 
-function TaskForm({ task, modules, submitting, onClose, onSubmit }: TaskFormProps) {
+function TaskForm({ task, modules, modulesError, submitting, error, onClose, onSubmit }: TaskFormProps) {
   const [form, setForm] = useState<FormState>({
     title: task?.title || '',
     description: task?.description || '',
@@ -133,7 +135,7 @@ function TaskForm({ task, modules, submitting, onClose, onSubmit }: TaskFormProp
     gradeWeight: task?.grade_weight?.toString() || '',
     difficulty: task?.difficulty || 'medium',
     isGroupWork: task?.is_group_work || false,
-    status: task?.status === 'overdue' ? 'in_progress' : task?.status || 'not_started',
+    status: task?.status || 'not_started',
     progressPercentage: task?.progress_percentage?.toString() || '0',
   });
   const [modifiedFields, setModifiedFields] = useState<ModifiedFields>({});
@@ -160,6 +162,14 @@ function TaskForm({ task, modules, submitting, onClose, onSubmit }: TaskFormProp
     setExtraction(null);
     onClose();
   };
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !submitting && !extracting && !readingFile) onClose();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [onClose, submitting, extracting, readingFile]);
 
   const handleFileChange = async (file: File | undefined) => {
     clearUpload();
@@ -298,7 +308,7 @@ function TaskForm({ task, modules, submitting, onClose, onSubmit }: TaskFormProp
     };
 
     if (task) {
-      payload.status = form.status;
+      if (form.status !== task.status) payload.status = form.status;
       payload.progress_percentage = form.status === 'completed' ? 100 : Number(form.progressPercentage);
     }
 
@@ -325,6 +335,8 @@ function TaskForm({ task, modules, submitting, onClose, onSubmit }: TaskFormProp
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5 p-6">
+          {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</p>}
+
           {!task && (
             <section className="space-y-4 rounded-lg border border-primary-200 bg-primary-50 p-4" aria-labelledby="assignment-import-title">
               <div>
@@ -440,6 +452,7 @@ function TaskForm({ task, modules, submitting, onClose, onSubmit }: TaskFormProp
                 <option value="">No module</option>
                 {modules.map((module) => <option key={module.module_id} value={module.module_id}>{module.module_code} — {module.module_name}</option>)}
               </select>
+              {modulesError && <p className="mt-1.5 text-xs text-amber-700" role="status">{modulesError}</p>}
             </div>
             <div>
               <label htmlFor="task-difficulty" className="mb-1 block text-sm font-medium text-gray-700">Difficulty</label>
