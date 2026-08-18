@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { cognitoAuth } from '../services/cognitoAuth';
+import { tokenStorage, type AuthStoragePreference } from '../services/authStorage';
 
 interface SocialAuthButtonsProps {
   mode: 'login' | 'signup';
   returnTo?: string;
   onError: (message: string) => void;
+  storagePreference?: AuthStoragePreference;
 }
 
 type Provider = 'Google' | 'Discord';
@@ -28,7 +30,7 @@ function DiscordIcon() {
   );
 }
 
-function SocialAuthButtons({ mode, returnTo = '/dashboard', onError }: SocialAuthButtonsProps) {
+function SocialAuthButtons({ mode, returnTo = '/dashboard', onError, storagePreference }: SocialAuthButtonsProps) {
   const [pendingProvider, setPendingProvider] = useState<Provider | null>(null);
   const providers: Array<{ name: Provider; enabled: boolean; icon: ReactNode }> = [
     {
@@ -51,6 +53,7 @@ function SocialAuthButtons({ mode, returnTo = '/dashboard', onError }: SocialAut
     setPendingProvider(provider);
 
     try {
+      if (storagePreference) tokenStorage.setPreference(storagePreference);
       await cognitoAuth.initiateHostedUILogin(provider, returnTo);
     } catch (error) {
       setPendingProvider(null);

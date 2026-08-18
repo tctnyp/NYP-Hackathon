@@ -19,6 +19,7 @@ import Calendar from './components/Calendar';
 import Modules from './components/Modules';
 import AdminPanel from './components/AdminPanel';
 import AccountSettingsRoute from './components/AccountSettingsRoute';
+import LoginStoragePrompt from './components/LoginStorageConsent';
 
 function App() {
   return (
@@ -62,6 +63,7 @@ function App() {
               />
             </Routes>
             </Router>
+            <LoginStoragePrompt />
           </AccountProvider>
         </AuthProvider>
       </PwaProvider>

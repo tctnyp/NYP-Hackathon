@@ -133,6 +133,20 @@ Enable the Google Calendar API for that Google Cloud project. Supply these prote
 
 Generate encryption values outside the repository and pass them only through the protected deployment channel. Never put them in `.env`, frontend variables, source control, command logs, or deployment archives. Rotate in two deployments: first move the old current key to `GoogleCalendarPreviousEncryptionKeyBase64` while installing the new current key; clear the previous key only after credentials have been reauthorized or migrated. If neither retained key can authenticate a cleanup credential, the backend enters `cleanup_reauthorization_required` rather than retrying forever.
 
+### Browser login storage
+
+The frontend defaults to a session-only Cognito login. An explicit cookie-style prompt and the login form can opt a user into **Remember this browser** on a personal device:
+
+- `session` keeps one namespaced Cognito token bundle in `sessionStorage`; closing the browser session removes it.
+- `persistent` keeps that bundle in `localStorage`, allowing Cognito refresh-token restoration after a browser restart.
+- Changing the preference migrates the complete token bundle and removes the copy in the other store. Sign-out clears both stores and legacy token keys.
+- OAuth state, PKCE verifier, return path, and the per-flow storage choice remain namespaced in `sessionStorage` and are never made persistent.
+- No advertising or tracking cookies are introduced. This SPA storage is not equivalent to an `HttpOnly` session cookie; any same-origin JavaScript can read `localStorage`, so persistent login should not be enabled on shared devices and XSS controls remain essential.
+
+The preference is available again in Account Settings. If persistent browser storage is blocked or full, the client falls back to session-only behavior rather than duplicating or losing a valid session.
+
+
+
 This AWS Academy stack uses the externally supplied `LabRoleArn`. Before every Calendar deployment, validate its documented DynamoDB, stream, SQS, Cognito, and CloudWatch Logs contract without printing secrets:
 
 ```powershell
