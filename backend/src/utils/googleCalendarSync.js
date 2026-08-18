@@ -21,7 +21,8 @@ const CALENDAR_CONNECTIONS_TABLE = process.env.CALENDAR_CONNECTIONS_TABLE || 'ac
 const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 const APP_MARKER = 'academic-task-manager';
 const KEY_VERSION = 'v1';
-const MAX_PROVIDER_ATTEMPTS = 3;
+const MAX_PROVIDER_ATTEMPTS = 2;
+const PROVIDER_TIMEOUT_MS = 4000;
 
 class CalendarSyncError extends Error {
   constructor(message, { code = 'calendar_sync_failed', retryable = false, status = 500 } = {}) {
@@ -44,6 +45,7 @@ function calendarConfig() {
     clientSecret: process.env.GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET,
     redirectUri: process.env.GOOGLE_CALENDAR_OAUTH_REDIRECT_URI,
     encryptionKey: process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64,
+    previousEncryptionKey: process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64,
     environment: process.env.ENVIRONMENT || 'dev',
     revokeOnDisable: process.env.GOOGLE_CALENDAR_REVOKE_ON_DISABLE === 'true',
   };
@@ -73,6 +75,10 @@ function encryptionKey(value = calendarConfig().encryptionKey) {
   return key;
 }
 
+function encryptionKeyId(value) {
+  return createHash('sha256').update(encryptionKey(value)).digest('hex').slice(0, 16);
+}
+
 function credentialAad(userId) {
   return Buffer.from(`${KEY_VERSION}\0google-calendar\0${userId}`, 'utf8');
 }
@@ -82,12 +88,14 @@ function encryptRefreshToken(refreshToken, userId, keyValue) {
     throw new CalendarSyncError('Calendar credential cannot be encrypted', { code: 'invalid_credential' });
   }
   const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', encryptionKey(keyValue), iv);
+  const key = encryptionKey(keyValue);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(credentialAad(userId));
   const ciphertext = Buffer.concat([cipher.update(refreshToken, 'utf8'), cipher.final()]);
   return {
     version: KEY_VERSION,
     algorithm: 'A256GCM',
+    key_id: createHash('sha256').update(key).digest('hex').slice(0, 16),
     iv: iv.toString('base64'),
     tag: cipher.getAuthTag().toString('base64'),
     ciphertext: ciphertext.toString('base64'),
@@ -95,23 +103,43 @@ function encryptRefreshToken(refreshToken, userId, keyValue) {
 }
 
 function decryptRefreshToken(encrypted, userId, keyValue) {
-  try {
-    if (!encrypted || encrypted.version !== KEY_VERSION || encrypted.algorithm !== 'A256GCM') throw new Error('version');
-    const iv = Buffer.from(encrypted.iv, 'base64');
-    const tag = Buffer.from(encrypted.tag, 'base64');
-    const ciphertext = Buffer.from(encrypted.ciphertext, 'base64');
-    if (iv.length !== 12 || tag.length !== 16 || ciphertext.length < 1) throw new Error('shape');
-    const decipher = createDecipheriv('aes-256-gcm', encryptionKey(keyValue), iv);
-    decipher.setAAD(credentialAad(userId));
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
-  } catch (err) {
-    if (err instanceof CalendarSyncError) throw err;
+  if (!encrypted || encrypted.version !== KEY_VERSION || encrypted.algorithm !== 'A256GCM') {
     throw new CalendarSyncError('Stored calendar credential could not be decrypted', {
-      code: 'credential_unavailable',
-      status: 500,
+      code: 'credential_unavailable', status: 500,
     });
   }
+  const iv = Buffer.from(encrypted.iv || '', 'base64');
+  const tag = Buffer.from(encrypted.tag || '', 'base64');
+  const ciphertext = Buffer.from(encrypted.ciphertext || '', 'base64');
+  if (iv.length !== 12 || tag.length !== 16 || ciphertext.length < 1) {
+    throw new CalendarSyncError('Stored calendar credential could not be decrypted', {
+      code: 'credential_unavailable', status: 500,
+    });
+  }
+
+  const config = calendarConfig();
+  const candidates = [...new Set([keyValue || config.encryptionKey, config.previousEncryptionKey].filter(Boolean))];
+  for (const candidate of candidates) {
+    let key;
+    try {
+      key = encryptionKey(candidate);
+    } catch {
+      continue;
+    }
+    if (encrypted.key_id && encryptionKeyId(candidate) !== encrypted.key_id) continue;
+    try {
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAAD(credentialAad(userId));
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+    } catch {
+      // Try the retained rotation key before requiring user reauthorization.
+    }
+  }
+  throw new CalendarSyncError('Stored calendar credential could not be decrypted', {
+    code: 'credential_unavailable',
+    status: 500,
+  });
 }
 
 function ownerMarker(userId) {
@@ -196,7 +224,7 @@ async function providerRequest(url, options = {}, { allowNotFound = false, allow
   for (let attempt = 0; attempt < MAX_PROVIDER_ATTEMPTS; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, { ...options, signal: AbortSignal.timeout(10000) });
+      response = await fetch(url, { ...options, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
     } catch {
       lastError = new CalendarSyncError('Google Calendar could not be reached', {
         code: 'provider_temporarily_unavailable', retryable: true, status: 503,
@@ -262,6 +290,10 @@ async function setConnectionStatus(userId, updates, remove = []) {
     ReturnValues: 'ALL_NEW',
   }));
   return response.Attributes;
+}
+
+function credentialNeedsReauthorization(code) {
+  return code === 'reauthorization_required';
 }
 
 async function markSyncResult(userId, { errorCode = null, disableCredential = false } = {}) {
@@ -407,7 +439,7 @@ async function syncTaskForUser(userId, task) {
     const syncError = err instanceof CalendarSyncError ? err : new CalendarSyncError('Calendar synchronization failed');
     await markSyncResult(userId, {
       errorCode: syncError.code,
-      disableCredential: syncError.code === 'reauthorization_required',
+      disableCredential: credentialNeedsReauthorization(syncError.code),
     });
     throw syncError;
   }
@@ -526,7 +558,7 @@ async function reconcileUserCalendar(userId, { removeAll = false, limit = 5 } = 
     return { synced: true, processed: page.items.length, pending: false, complete: true };
   } catch (err) {
     const syncError = err instanceof CalendarSyncError ? err : new CalendarSyncError('Calendar synchronization failed');
-    if (syncError.code === 'reauthorization_required' && connection.status === 'disable_pending') {
+    if (credentialNeedsReauthorization(syncError.code) && connection.status === 'disable_pending') {
       await setConnectionStatus(userId, {
         status: 'cleanup_reauthorization_required',
         enabled: false,
@@ -536,7 +568,7 @@ async function reconcileUserCalendar(userId, { removeAll = false, limit = 5 } = 
     } else {
       await markSyncResult(userId, {
         errorCode: syncError.code,
-        disableCredential: syncError.code === 'reauthorization_required',
+        disableCredential: credentialNeedsReauthorization(syncError.code),
       });
     }
     throw syncError;
@@ -564,7 +596,7 @@ async function finishDisable(userId) {
   }));
 }
 
-async function scanConnections(limit = 5) {
+async function scanConnections(limit = 25) {
   const schedulerKey = { user_id: '__calendar_scheduler__' };
   const scheduler = await docClient.send(new GetCommand({
     TableName: CALENDAR_CONNECTIONS_TABLE,
@@ -582,17 +614,21 @@ async function scanConnections(limit = 5) {
     ExclusiveStartKey: scheduler.Item?.scan_cursor || undefined,
     Limit: Math.max(limit, 1),
   }));
+  const items = response.Items || [];
+  return {
+    items: items.slice(0, 1),
+    nextCursor: items[0] ? { user_id: items[0].user_id } : (response.LastEvaluatedKey || null),
+  };
+}
+
+async function commitConnectionScanCursor(nextCursor) {
   await docClient.send(new UpdateCommand({
     TableName: CALENDAR_CONNECTIONS_TABLE,
-    Key: schedulerKey,
+    Key: { user_id: '__calendar_scheduler__' },
     UpdateExpression: 'SET #cursor = :cursor, #updated_at = :updated_at',
     ExpressionAttributeNames: { '#cursor': 'scan_cursor', '#updated_at': 'updated_at' },
-    ExpressionAttributeValues: {
-      ':cursor': response.LastEvaluatedKey || null,
-      ':updated_at': timestamp(),
-    },
+    ExpressionAttributeValues: { ':cursor': nextCursor || null, ':updated_at': timestamp() },
   }));
-  return response.Items || [];
 }
 
 async function getGoogleLinkProfile(userId) {
@@ -610,6 +646,7 @@ module.exports = {
   CalendarSyncError,
   accessTokenForConnection,
   calendarConfig,
+  commitConnectionScanCursor,
   deleteTaskEvent,
   deleteTaskForUser,
   decryptRefreshToken,

@@ -1,4 +1,4 @@
-const { createHash, createPublicKey, createSign, randomBytes, timingSafeEqual } = require('node:crypto');
+const { createHash, createPrivateKey, createPublicKey, createSign, randomBytes, timingSafeEqual } = require('node:crypto');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const {
   DeleteCommand,
@@ -21,8 +21,9 @@ const DISCORD_REDIRECT_URI = process.env.DISCORD_OAUTH_REDIRECT_URI;
 const COGNITO_REDIRECT_URI = process.env.COGNITO_IDP_RESPONSE_URI;
 const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '');
 const KEY_ID = process.env.DISCORD_OIDC_KEY_ID || 'discord-oidc-1';
-const PRIVATE_KEY = process.env.DISCORD_OIDC_PRIVATE_KEY_BASE64
-  ? Buffer.from(process.env.DISCORD_OIDC_PRIVATE_KEY_BASE64, 'base64').toString('utf8')
+const PRIVATE_KEY_BASE64 = process.env.DISCORD_OIDC_PRIVATE_KEY_BASE64 || '';
+const PRIVATE_KEY = PRIVATE_KEY_BASE64
+  ? Buffer.from(PRIVATE_KEY_BASE64, 'base64').toString('utf8')
   : '';
 
 const STATE_TTL_SECONDS = 10 * 60;
@@ -112,6 +113,24 @@ function parseBody(event) {
   }
 }
 
+function configurationError() {
+  return new OAuthError('Discord authentication is not configured', 503, 'temporarily_unavailable');
+}
+
+function trustedCognitoRedirect(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash
+      && url.pathname.endsWith('/oauth2/idpresponse');
+  } catch {
+    return false;
+  }
+}
+
 function requireConfiguration() {
   const required = {
     DISCORD_OIDC_TABLE: SESSION_TABLE,
@@ -121,10 +140,30 @@ function requireConfiguration() {
     DISCORD_OAUTH_CLIENT_SECRET: DISCORD_CLIENT_SECRET,
     DISCORD_OAUTH_REDIRECT_URI: DISCORD_REDIRECT_URI,
     COGNITO_IDP_RESPONSE_URI: COGNITO_REDIRECT_URI,
-    DISCORD_OIDC_PRIVATE_KEY_BASE64: PRIVATE_KEY,
+    APP_URL,
+    DISCORD_OIDC_PRIVATE_KEY_BASE64: PRIVATE_KEY_BASE64,
   };
-  const missing = Object.entries(required).filter(([, value]) => !value).map(([name]) => name);
-  if (missing.length) throw new OAuthError('Discord authentication is not configured', 503, 'temporarily_unavailable');
+  if (Object.values(required).some((value) => !value)) throw configurationError();
+
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(KEY_ID)) throw configurationError();
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(PRIVATE_KEY_BASE64)
+      || Buffer.from(PRIVATE_KEY_BASE64, 'base64').toString('base64') !== PRIVATE_KEY_BASE64) {
+    throw configurationError();
+  }
+
+  let privateKey;
+  try {
+    privateKey = createPrivateKey(PRIVATE_KEY);
+  } catch {
+    throw configurationError();
+  }
+  if (privateKey.asymmetricKeyType !== 'rsa' || (privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2048) {
+    throw configurationError();
+  }
+
+  if (DISCORD_REDIRECT_URI !== `${APP_URL}/account/settings` || !trustedCognitoRedirect(COGNITO_REDIRECT_URI)) {
+    throw configurationError();
+  }
 }
 
 function safeEqual(left, right) {

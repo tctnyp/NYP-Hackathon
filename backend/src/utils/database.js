@@ -97,15 +97,26 @@ async function queryItems(params) {
 }
 
 /**
- * Scan items from DynamoDB
+ * Scan one DynamoDB page, including the continuation key.
  */
-async function scanItems(params) {
+async function scanPage(params) {
   const command = new ScanCommand({
     TableName: TASKS_TABLE,
     ...params,
   });
   const response = await docClient.send(command);
-  return response.Items || [];
+  return {
+    Items: response.Items || [],
+    LastEvaluatedKey: response.LastEvaluatedKey || null,
+  };
+}
+
+/**
+ * Scan items from the first DynamoDB page.
+ */
+async function scanItems(params) {
+  const page = await scanPage(params);
+  return page.Items;
 }
 
 /**
@@ -154,6 +165,7 @@ module.exports = {
   updateItem,
   deleteItem,
   queryItems,
+  scanPage,
   scanItems,
   batchWrite,
   timestamp,

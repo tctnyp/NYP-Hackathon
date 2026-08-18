@@ -1,5 +1,6 @@
 const {
   CalendarSyncError,
+  commitConnectionScanCursor,
   finishDisable,
   reconcileUserCalendar,
   revokeRefreshTokenIfConfigured,
@@ -38,23 +39,24 @@ async function processStreamRecord(record) {
 }
 
 async function processScheduledReconciliation() {
-  const connections = await scanConnections();
-  for (const connection of connections) {
+  const { items, nextCursor } = await scanConnections(25);
+  for (const connection of items) {
     try {
       if (connection.status === 'disable_pending') {
-        const result = await reconcileUserCalendar(connection.user_id, { removeAll: true, limit: 5 });
+        const result = await reconcileUserCalendar(connection.user_id, { removeAll: true, limit: 1 });
         if (result.complete) {
           await revokeRefreshTokenIfConfigured(connection.user_id);
           await finishDisable(connection.user_id);
         }
       } else if (connection.status === 'enabled') {
-        await reconcileUserCalendar(connection.user_id, { limit: 5 });
+        await reconcileUserCalendar(connection.user_id, { limit: 1 });
       }
     } catch (err) {
       console.error('Scheduled Calendar reconciliation failed:', connection.user_id, err.code || 'calendar_sync_failed');
     }
   }
-  return { processed: connections.length };
+  await commitConnectionScanCursor(nextCursor);
+  return { processed: items.length };
 }
 
 exports.handler = async (event) => {
@@ -72,9 +74,7 @@ exports.handler = async (event) => {
       const sequenceNumber = record.dynamodb?.SequenceNumber;
       if (!sequenceNumber) throw new Error('DynamoDB stream sequence number is missing');
       console.error('Task Calendar stream synchronization failed:', sequenceNumber, syncError?.code || 'calendar_sync_failed');
-      if (!syncError || syncError.retryable) {
-        batchItemFailures.push({ itemIdentifier: sequenceNumber });
-      }
+      batchItemFailures.push({ itemIdentifier: sequenceNumber });
     }
   }
   return { batchItemFailures };

@@ -173,7 +173,7 @@ describe('Google Calendar consent handler', () => {
       state: `calendar.${'a'.repeat(43)}`,
     }));
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(202);
     expect(mockSend.mock.calls[0][0].input.ConditionExpression).toContain('#oauth_state.#purpose');
     expect(mockEncrypt).toHaveBeenCalledWith('refresh-secret', 'user-123');
     const transaction = mockSend.mock.calls[1][0].input;
@@ -249,5 +249,33 @@ describe('Google Calendar consent handler', () => {
     }));
     expect(noScope.statusCode).toBe(400);
     expect(mockSetConnectionStatus).not.toHaveBeenCalled();
+  });
+
+  test('queues manual synchronization without provider calls in the API request', async () => {
+    mockGetConnection.mockResolvedValue({
+      user_id: 'user-123', status: 'enabled', enabled: true, encrypted_refresh_token: { ciphertext: 'encrypted' },
+    });
+    const response = await calendar.update(event({ action: 'sync' }));
+    expect(response.statusCode).toBe(202);
+    expect(mockSetConnectionStatus).toHaveBeenCalledWith('user-123', {
+      reconcile: { phase: 'tasks', task_cursor: null },
+      last_error: null,
+    });
+    expect(mockReconcile).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('queues disable cleanup without provider calls in the API request', async () => {
+    mockGetConnection.mockResolvedValue({
+      user_id: 'user-123', status: 'enabled', enabled: true, encrypted_refresh_token: { ciphertext: 'encrypted' },
+    });
+    const response = await calendar.update(event({ action: 'disable' }));
+    expect(response.statusCode).toBe(202);
+    expect(mockSetConnectionStatus).toHaveBeenCalledWith('user-123', {
+      status: 'disable_pending', enabled: false, last_error: null,
+    });
+    expect(mockReconcile).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

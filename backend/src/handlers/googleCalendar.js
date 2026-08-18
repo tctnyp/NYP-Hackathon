@@ -19,12 +19,9 @@ const {
   CalendarSyncError,
   calendarConfig,
   encryptRefreshToken,
-  finishDisable,
   getConnection,
   getGoogleLinkProfile,
   isCalendarConfigured,
-  reconcileUserCalendar,
-  revokeRefreshTokenIfConfigured,
   setConnectionStatus,
 } = require('../utils/googleCalendarSync');
 
@@ -346,16 +343,7 @@ async function callback(event, body) {
     throw transactionError;
   }
 
-  try {
-    const reconciliation = await reconcileUserCalendar(userId, { removeAll: cleanupMode, limit: 2 });
-    if (cleanupMode && reconciliation.complete) {
-      await revokeRefreshTokenIfConfigured(userId);
-      await finishDisable(userId);
-    }
-  } catch (syncError) {
-    if (syncError.code === 'reauthorization_required') throw syncError;
-  }
-  return success({ calendar_sync: publicCalendarStatus(await getConnection(userId), true) });
+  return success({ calendar_sync: publicCalendarStatus(await getConnection(userId), true) }, 202);
 }
 
 async function syncNow(event, profile) {
@@ -363,8 +351,11 @@ async function syncNow(event, profile) {
   if (!link.linked) return error('Link a Google account before synchronizing Calendar', 409);
   const connection = await getConnection(getUserId(event));
   if (!connection?.enabled || connection.status !== 'enabled') return error('Google Calendar synchronization is not enabled', 409);
-  await reconcileUserCalendar(getUserId(event));
-  return success({ calendar_sync: publicCalendarStatus(await getConnection(getUserId(event)), true) });
+  await setConnectionStatus(getUserId(event), {
+    reconcile: { phase: 'tasks', task_cursor: null },
+    last_error: null,
+  });
+  return success({ calendar_sync: publicCalendarStatus(await getConnection(getUserId(event)), true) }, 202);
 }
 
 async function disable(event, profile) {
@@ -383,19 +374,7 @@ async function disable(event, profile) {
   }
 
   await setConnectionStatus(userId, { status: 'disable_pending', enabled: false, last_error: null });
-  try {
-    const reconciliation = await reconcileUserCalendar(userId, { removeAll: true, limit: 2 });
-    if (!reconciliation.complete) {
-      return success({ calendar_sync: publicCalendarStatus(await getConnection(userId), link.linked) }, 202);
-    }
-    await revokeRefreshTokenIfConfigured(userId);
-    await finishDisable(userId);
-    return success({ calendar_sync: publicCalendarStatus(null, link.linked) });
-  } catch (syncError) {
-    return error(syncError.code === 'reauthorization_required'
-      ? 'Reauthorize Google Calendar to finish removing managed events'
-      : 'Calendar cleanup is pending and will be retried automatically', 503);
-  }
+  return success({ calendar_sync: publicCalendarStatus(await getConnection(userId), link.linked) }, 202);
 }
 
 exports.getStatus = async (event) => {

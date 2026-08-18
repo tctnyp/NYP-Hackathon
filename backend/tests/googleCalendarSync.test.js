@@ -162,4 +162,107 @@ describe('Google Calendar synchronization utilities', () => {
     });
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
+
+  test('decrypts credentials with a retained previous key during two-phase rotation', () => {
+    const originalCurrent = process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64;
+    const originalPrevious = process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+    const oldKey = Buffer.alloc(32, 3).toString('base64');
+    const newKey = Buffer.alloc(32, 9).toString('base64');
+    process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = oldKey;
+    const encrypted = sync.encryptRefreshToken('rotating-refresh-token', 'user-123');
+    process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = newKey;
+    process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64 = oldKey;
+    expect(sync.decryptRefreshToken(encrypted, 'user-123')).toBe('rotating-refresh-token');
+    process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = originalCurrent;
+    if (originalPrevious === undefined) delete process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+    else process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64 = originalPrevious;
+  });
+
+  test.each([
+    ['task synchronization', () => sync.syncTaskForUser('user-123', task)],
+    ['scheduled reconciliation', () => sync.reconcileUserCalendar('user-123', { limit: 1 })],
+  ])('preserves an active encrypted credential after a key mismatch during %s', async (_label, operation) => {
+    const originalCurrent = process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64;
+    const originalPrevious = process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+    try {
+      process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = Buffer.alloc(32, 4).toString('base64');
+      const encrypted = sync.encryptRefreshToken('recoverable-refresh-token', 'user-123');
+      process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = Buffer.alloc(32, 5).toString('base64');
+      delete process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+      mockSend
+        .mockResolvedValueOnce({ Item: {
+          user_id: 'user-123', status: 'enabled', enabled: true, encrypted_refresh_token: encrypted,
+        } })
+        .mockResolvedValueOnce({ Attributes: {} });
+
+      await expect(operation()).rejects.toMatchObject({ code: 'credential_unavailable' });
+      const update = mockSend.mock.calls[1][0].input;
+      expect(update.UpdateExpression).not.toContain('REMOVE');
+      expect(Object.values(update.ExpressionAttributeNames)).not.toContain('encrypted_refresh_token');
+      expect(Object.values(update.ExpressionAttributeValues)).toContain('credential_unavailable');
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = originalCurrent;
+      if (originalPrevious === undefined) delete process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+      else process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64 = originalPrevious;
+    }
+  });
+
+  test('preserves pending-cleanup ciphertext when no retained key can decrypt it', async () => {
+    const originalCurrent = process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64;
+    const originalPrevious = process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+    try {
+      process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = Buffer.alloc(32, 4).toString('base64');
+      const encrypted = sync.encryptRefreshToken('lost-key-refresh-token', 'user-123');
+      process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = Buffer.alloc(32, 5).toString('base64');
+      delete process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+      mockSend
+        .mockResolvedValueOnce({ Item: {
+          user_id: 'user-123', status: 'disable_pending', enabled: false, encrypted_refresh_token: encrypted,
+        } })
+        .mockResolvedValueOnce({ Attributes: {} });
+
+      await expect(sync.reconcileUserCalendar('user-123', { removeAll: true, limit: 1 })).rejects.toMatchObject({
+        code: 'credential_unavailable',
+      });
+      const update = mockSend.mock.calls[1][0].input;
+      expect(update.UpdateExpression).not.toContain('REMOVE');
+      expect(Object.values(update.ExpressionAttributeNames)).not.toContain('encrypted_refresh_token');
+      expect(Object.values(update.ExpressionAttributeValues)).toContain('credential_unavailable');
+    } finally {
+      process.env.GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64 = originalCurrent;
+      if (originalPrevious === undefined) delete process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64;
+      else process.env.GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64 = originalPrevious;
+    }
+  });
+
+  test('advances across an empty filtered scan page without writing the scheduler cursor early', async () => {
+    mockSend
+      .mockResolvedValueOnce({ Item: { scan_cursor: { user_id: 'before' } } })
+      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { user_id: 'after-empty-page' } });
+    const result = await sync.scanConnections(25);
+    expect(result).toEqual({ items: [], nextCursor: { user_id: 'after-empty-page' } });
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(mockSend.mock.calls[1][0].input).toEqual(expect.objectContaining({
+      ExclusiveStartKey: { user_id: 'before' },
+      Limit: 25,
+    }));
+  });
+
+  test('returns only one active connection and a cursor immediately after that user', async () => {
+    mockSend
+      .mockResolvedValueOnce({ Item: {} })
+      .mockResolvedValueOnce({
+        Items: [
+          { user_id: 'selected-user', status: 'enabled' },
+          { user_id: 'later-user', status: 'enabled' },
+        ],
+        LastEvaluatedKey: { user_id: 'raw-page-end' },
+      });
+    const result = await sync.scanConnections(25);
+    expect(result).toEqual({
+      items: [{ user_id: 'selected-user', status: 'enabled' }],
+      nextCursor: { user_id: 'selected-user' },
+    });
+  });
 });
