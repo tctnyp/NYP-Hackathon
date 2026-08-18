@@ -48,15 +48,3 @@ export interface DashboardData {
   tasks_by_module: Module[];
   high_priority_tasks: Task[];
 }
-
-export interface AIPriority {
-  task_id: string;
-  reason: string;
-  suggested_action: string;
-}
-
-export interface AIRecommendations {
-  top_priorities: AIPriority[];
-  warnings: string[];
-  workload_assessment: string;
-}

@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Academic Task Manager - AWS Academy lab deployment
+Description: Academic Task Manager - AWS Academy lab deployment with Cognito authentication
 
 Parameters:
   Environment:
@@ -10,9 +10,31 @@ Parameters:
   LabRoleArn:
     Type: String
     Default: arn:aws:iam::081045266942:role/LabRole
-  DemoUserId:
+  FrontendUrl:
     Type: String
-    Default: lab-demo-user
+    Default: https://main.d1wbf7oa294iz6.amplifyapp.com
+    Description: Frontend URL for OAuth callbacks
+  GoogleOAuthClientId:
+    Type: String
+    Default: ''
+    Description: Optional Google OAuth 2.0 Client ID for social sign-in
+  GoogleOAuthClientSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Optional Google OAuth 2.0 Client Secret for social sign-in
+  CognitoFromEmail:
+    Type: String
+    Default: noreply@tancheetiong.com
+    Description: From address for Cognito transactional emails when an SES identity ARN is supplied
+  CognitoEmailSourceArn:
+    Type: String
+    Default: ''
+    Description: Optional ARN of a verified SES email or domain identity used by Cognito
+
+Conditions:
+  HasGoogleOAuth: !Not [!Equals [!Ref GoogleOAuthClientId, '']]
+  HasCustomEmailSender: !Not [!Equals [!Ref CognitoEmailSourceArn, '']]
 
 Globals:
   Function:
@@ -32,10 +54,136 @@ Globals:
         CLASSES_TABLE: !Ref ClassesTable
         ENROLLMENTS_TABLE: !Ref EnrollmentsTable
         SNS_TOPIC_ARN: !Ref ReminderTopic
-        DEFAULT_USER_ID: !Ref DemoUserId
-        DEFAULT_USER_EMAIL: lab-demo@example.invalid
 
 Resources:
+  # Cognito PostConfirmation trigger Lambda (created before UserPool to break circular dependency)
+  PostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/postConfirmation.handler
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          USERS_TABLE: !Ref UsersTable
+
+  PostConfirmationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PostConfirmationFunction
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # Cognito User Pool for authentication
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DependsOn: PostConfirmationInvokePermission
+    Properties:
+      UserPoolName: !Sub academic-task-manager-${Environment}
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      EmailConfiguration: !If
+        - HasCustomEmailSender
+        - EmailSendingAccount: DEVELOPER
+          From: !Ref CognitoFromEmail
+          SourceArn: !Ref CognitoEmailSourceArn
+        - EmailSendingAccount: COGNITO_DEFAULT
+      UsernameConfiguration:
+        CaseSensitive: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: name
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+      LambdaConfig:
+        PostConfirmation: !GetAtt PostConfirmationFunction.Arn
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+          - email
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub academic-task-manager-client-${Environment}
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - !Sub ${FrontendUrl}/auth/callback
+        - http://localhost:3000/auth/callback
+      LogoutURLs:
+        - !Ref FrontendUrl
+        - http://localhost:3000
+      SupportedIdentityProviders:
+        - COGNITO
+        - !If [HasGoogleOAuth, !Ref GoogleIdentityProvider, !Ref 'AWS::NoValue']
+      AllowedOAuthFlowsUserPoolClient: true
+      PreventUserExistenceErrors: ENABLED
+      RefreshTokenValidity: 30
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub academic-task-mgr-${Environment}-${AWS::AccountId}
+      UserPoolId: !Ref UserPool
+
+  AdminsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Admins
+      Description: Administrators with full system access
+      UserPoolId: !Ref UserPool
+      Precedence: 1
+
+  GoogleIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Condition: HasGoogleOAuth
+    Properties:
+      UserPoolId: !Ref UserPool
+      ProviderName: Google
+      ProviderType: Google
+      ProviderDetails:
+        client_id: !Ref GoogleOAuthClientId
+        client_secret: !Ref GoogleOAuthClientSecret
+        authorize_scopes: profile email openid
+      AttributeMapping:
+        email: email
+        name: name
+
   TasksTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -165,40 +313,16 @@ Resources:
       Name: !Sub academic-task-manager-${Environment}
       StageName: !Ref Environment
       EndpointConfiguration: REGIONAL
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
       Cors:
-        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
-        AllowHeaders: "'Content-Type,X-Api-Key,Authorization'"
+        AllowMethods: "'GET,POST,PUT,DELETE,PATCH,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
         AllowOrigin: "'*'"
-
-  ApiKey:
-    Type: AWS::ApiGateway::ApiKey
-    DependsOn: TaskManagerApiStage
-    Properties:
-      Name: !Sub academic-task-manager-key-${Environment}
-      Description: Browser demo key for the Academic Task Manager lab
-      Enabled: true
-
-  UsagePlan:
-    Type: AWS::ApiGateway::UsagePlan
-    DependsOn: TaskManagerApiStage
-    Properties:
-      UsagePlanName: !Sub academic-task-manager-usage-${Environment}
-      ApiStages:
-        - ApiId: !Ref TaskManagerApi
-          Stage: !Ref Environment
-      Throttle:
-        RateLimit: 10
-        BurstLimit: 20
-      Quota:
-        Limit: 10000
-        Period: MONTH
-
-  UsagePlanKey:
-    Type: AWS::ApiGateway::UsagePlanKey
-    Properties:
-      KeyId: !Ref ApiKey
-      KeyType: API_KEY
-      UsagePlanId: !Ref UsagePlan
 
   GetTasksFunction:
     Type: AWS::Serverless::Function
@@ -208,7 +332,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: GET }
 
   CreateTaskFunction:
     Type: AWS::Serverless::Function
@@ -218,7 +342,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: POST, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: POST }
 
   UpdateTaskFunction:
     Type: AWS::Serverless::Function
@@ -228,7 +352,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: PUT, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: PUT }
 
   DeleteTaskFunction:
     Type: AWS::Serverless::Function
@@ -238,7 +362,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: DELETE, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/tasks/{taskId}', Method: DELETE }
 
   GetModulesFunction:
     Type: AWS::Serverless::Function
@@ -248,7 +372,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /modules, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /modules, Method: GET }
 
   CreateModuleFunction:
     Type: AWS::Serverless::Function
@@ -258,7 +382,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /modules, Method: POST, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /modules, Method: POST }
 
   UpdateModuleFunction:
     Type: AWS::Serverless::Function
@@ -268,7 +392,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/modules/{moduleId}', Method: PUT, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/modules/{moduleId}', Method: PUT }
 
   DeleteModuleFunction:
     Type: AWS::Serverless::Function
@@ -278,7 +402,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/modules/{moduleId}', Method: DELETE, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/modules/{moduleId}', Method: DELETE }
 
   GetDashboardFunction:
     Type: AWS::Serverless::Function
@@ -288,37 +412,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /dashboard, Method: GET, Auth: { ApiKeyRequired: true } }
-
-  AIPrioritizeFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Role: !Ref LabRoleArn
-      Handler: handlers/labAi.prioritize
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /ai/prioritize, Method: POST, Auth: { ApiKeyRequired: true } }
-
-  AIBreakdownFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Role: !Ref LabRoleArn
-      Handler: handlers/labAi.breakdown
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/ai/breakdown/{taskId}', Method: POST, Auth: { ApiKeyRequired: true } }
-
-  AgentInvokeFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Role: !Ref LabRoleArn
-      Handler: handlers/labAi.agent
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /ai/agent, Method: POST, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /dashboard, Method: GET }
 
   ReminderCheckerFunction:
     Type: AWS::Serverless::Function
@@ -342,7 +436,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: GET }
 
   UpsertProfileFunction:
     Type: AWS::Serverless::Function
@@ -352,7 +446,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: PUT, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: PUT }
 
   InstitutionCatalogFunction:
     Type: AWS::Serverless::Function
@@ -362,7 +456,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /organizations, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /organizations, Method: GET }
 
   SchoolsCatalogFunction:
     Type: AWS::Serverless::Function
@@ -372,7 +466,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /schools, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /schools, Method: GET }
 
   ClassesCatalogFunction:
     Type: AWS::Serverless::Function
@@ -382,7 +476,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /classes, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /classes, Method: GET }
 
   EnrollmentsFunction:
     Type: AWS::Serverless::Function
@@ -392,7 +486,7 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account/classes, Method: GET, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account/classes, Method: GET }
 
   EnrollFunction:
     Type: AWS::Serverless::Function
@@ -402,15 +496,51 @@ Resources:
       Events:
         ApiEvent:
           Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account/classes, Method: POST, Auth: { ApiKeyRequired: true } }
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account/classes, Method: POST }
+
+  # Admin functions - require Admins group membership
+  AdminListUsersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/admin.listUsers
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /admin/users, Method: GET }
+
+  AdminManageUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/admin.manageUser
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/admin/users/{username}', Method: PATCH }
 
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL
     Value: !Sub https://${TaskManagerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
-  ApiKeyId:
-    Description: API Gateway key ID; retrieve its value with get-api-key
-    Value: !Ref ApiKey
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+  CognitoDomain:
+    Description: Cognito hosted UI domain (hostname only)
+    Value: !Sub academic-task-mgr-${Environment}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com
+  GoogleOAuthEnabled:
+    Description: Whether Google OAuth is configured
+    Value: !If [HasGoogleOAuth, 'true', 'false']
   TasksTableName:
     Value: !Ref TasksTable
   UsersTableName:
