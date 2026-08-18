@@ -16,25 +16,22 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.4",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
+    "eslint": "10.8.1",
     "postcss": "^8.5.25",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "vite": "^8.2.0"
   },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "package:amplify": "python scripts/package_amplify.py dist amplify-deploy.zip",
     "preview": "vite preview",
-    "lint": "eslint src --ext js,jsx"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app"
-    ]
+    "lint": "eslint src"
   },
   "browserslist": {
     "production": [
