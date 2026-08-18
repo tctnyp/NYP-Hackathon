@@ -326,9 +326,11 @@ Resources:
         - profile
       CallbackURLs:
         - !Sub ${FrontendUrl}/auth/callback
+        - !If [IsProduction, https://main.d1wbf7oa294iz6.amplifyapp.com/auth/callback, !Ref 'AWS::NoValue']
         - http://localhost:3000/auth/callback
       LogoutURLs:
         - !Ref FrontendUrl
+        - !If [IsProduction, https://main.d1wbf7oa294iz6.amplifyapp.com, !Ref 'AWS::NoValue']
         - http://localhost:3000
       SupportedIdentityProviders:
         - COGNITO
