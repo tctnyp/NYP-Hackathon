@@ -374,6 +374,42 @@ describe('account handler', () => {
     expect(mockCognitoSend).not.toHaveBeenCalled();
   });
 
+  test('does not mark a recovered missing profile as a first signup', async () => {
+    mockGetItem.mockResolvedValueOnce(undefined);
+    const response = await account.upsertProfile(event({ display_name: 'Recovered student' }));
+
+    expect(response.statusCode).toBe(200);
+    expect(mockPutItem.mock.calls[0][1].preferences).toEqual({});
+    expect(mockPutItem.mock.calls[0][1].preferences.onboarding_required).toBeUndefined();
+  });
+
+  test('persists walkthrough completion without replacing unrelated preferences', async () => {
+    mockGetItem.mockResolvedValueOnce({
+      ...existingProfile,
+      preferences: { onboarding_required: true, notification_guidance: true },
+    });
+    mockDocumentSend.mockResolvedValueOnce({
+      Attributes: {
+        ...existingProfile,
+        preferences: { onboarding_required: false, onboarding_version: 1, notification_guidance: true },
+      },
+    });
+    const response = await account.upsertProfile(event({ action: 'completeOnboarding', version: 1 }));
+
+    expect(response.statusCode).toBe(200);
+    const update = mockDocumentSend.mock.calls[0][0].input;
+    expect(update.UpdateExpression).toContain('#preferences.#required = :false');
+    expect(update.UpdateExpression).toContain('#preferences.#version = :version');
+    expect(update.ExpressionAttributeValues).toEqual(expect.objectContaining({ ':false': false, ':version': 1 }));
+    expect(responseData(response).profile.preferences).toEqual(expect.objectContaining({
+      onboarding_required: false,
+      onboarding_version: 1,
+    }));
+
+    const invalid = await account.upsertProfile(event({ action: 'completeOnboarding', version: 0 }));
+    expect(invalid.statusCode).toBe(400);
+  });
+
   test('does not allow a Google-origin user to disconnect their primary sign-in', async () => {
     const response = await account.upsertProfile(event(
       { action: 'disconnect', provider: 'google' },

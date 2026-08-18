@@ -8,6 +8,7 @@ const {
   QueryCommand,
   ScanCommand,
   BatchWriteCommand,
+  TransactWriteCommand,
 } = require('@aws-sdk/lib-dynamodb');
 
 const client = new DynamoDBClient({ region: process.env.REGION || 'us-east-1' });
@@ -15,43 +16,30 @@ const docClient = DynamoDBDocumentClient.from(client);
 
 const TASKS_TABLE = process.env.TASKS_TABLE || 'academic-tasks';
 const USERS_TABLE = process.env.USERS_TABLE || 'academic-task-users';
+const GROUPS_TABLE = process.env.GROUPS_TABLE || 'academic-groups';
 const ORGANIZATIONS_TABLE = process.env.ORGANIZATIONS_TABLE || 'academic-organizations';
 const SCHOOLS_TABLE = process.env.SCHOOLS_TABLE || 'academic-schools';
 const CLASSES_TABLE = process.env.CLASSES_TABLE || 'academic-classes';
 const ENROLLMENTS_TABLE = process.env.ENROLLMENTS_TABLE || 'academic-user-classes';
 
-/**
- * Get item from DynamoDB
- */
-async function getItem(tableName, key) {
-  const command = new GetCommand({
+async function getItem(tableName, key, options = {}) {
+  const response = await docClient.send(new GetCommand({
     TableName: tableName,
     Key: key,
-  });
-  const response = await docClient.send(command);
+    ConsistentRead: options.consistentRead !== false,
+  }));
   return response.Item;
 }
 
-/**
- * Put item to DynamoDB
- */
 async function putItem(tableName, item) {
-  const command = new PutCommand({
-    TableName: tableName,
-    Item: item,
-  });
-  await docClient.send(command);
+  await docClient.send(new PutCommand({ TableName: tableName, Item: item }));
   return item;
 }
 
-/**
- * Update item in DynamoDB
- */
-async function updateItem(tableName, key, updates) {
+async function updateItem(tableName, key, updates, options = {}) {
   const updateExpressions = [];
   const expressionAttributeNames = {};
   const expressionAttributeValues = {};
-
   Object.entries(updates).forEach(([field, value], index) => {
     const nameKey = `#field${index}`;
     const valueKey = `:value${index}`;
@@ -60,83 +48,91 @@ async function updateItem(tableName, key, updates) {
     expressionAttributeValues[valueKey] = value;
   });
 
-  const command = new UpdateCommand({
+  const response = await docClient.send(new UpdateCommand({
     TableName: tableName,
     Key: key,
     UpdateExpression: `SET ${updateExpressions.join(', ')}`,
-    ExpressionAttributeNames: expressionAttributeNames,
-    ExpressionAttributeValues: expressionAttributeValues,
+    ExpressionAttributeNames: { ...expressionAttributeNames, ...(options.ExpressionAttributeNames || {}) },
+    ExpressionAttributeValues: { ...expressionAttributeValues, ...(options.ExpressionAttributeValues || {}) },
+    ConditionExpression: options.ConditionExpression,
     ReturnValues: 'ALL_NEW',
-  });
-
-  const response = await docClient.send(command);
+  }));
   return response.Attributes;
 }
 
-/**
- * Delete item from DynamoDB
- */
-async function deleteItem(tableName, key) {
-  const command = new DeleteCommand({
+async function deleteItem(tableName, key, options = {}) {
+  await docClient.send(new DeleteCommand({
     TableName: tableName,
     Key: key,
-  });
-  await docClient.send(command);
+    ConditionExpression: options.ConditionExpression,
+    ExpressionAttributeNames: options.ExpressionAttributeNames,
+    ExpressionAttributeValues: options.ExpressionAttributeValues,
+  }));
 }
 
-/**
- * Query items from DynamoDB
- */
+async function queryTable(tableName, params) {
+  const items = [];
+  const limit = params.Limit;
+  let exclusiveStartKey = params.ExclusiveStartKey;
+  do {
+    const remaining = limit ? limit - items.length : undefined;
+    const response = await docClient.send(new QueryCommand({
+      TableName: tableName,
+      ...params,
+      Limit: remaining,
+      ExclusiveStartKey: exclusiveStartKey,
+    }));
+    items.push(...(response.Items || []));
+    exclusiveStartKey = response.LastEvaluatedKey;
+  } while (exclusiveStartKey && (!limit || items.length < limit));
+  return limit ? items.slice(0, limit) : items;
+}
+
 async function queryItems(params) {
-  const command = new QueryCommand({
-    TableName: TASKS_TABLE,
-    ...params,
-  });
-  const response = await docClient.send(command);
-  return response.Items || [];
+  return queryTable(TASKS_TABLE, params);
 }
 
-/**
- * Scan items from DynamoDB
- */
+async function scanTable(tableName, params = {}) {
+  const items = [];
+  let exclusiveStartKey;
+  do {
+    const response = await docClient.send(new ScanCommand({
+      TableName: tableName,
+      ...params,
+      ExclusiveStartKey: exclusiveStartKey,
+    }));
+    items.push(...(response.Items || []));
+    exclusiveStartKey = response.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return items;
+}
+
 async function scanItems(params) {
-  const command = new ScanCommand({
-    TableName: TASKS_TABLE,
-    ...params,
-  });
-  const response = await docClient.send(command);
-  return response.Items || [];
+  return scanTable(TASKS_TABLE, params);
 }
 
-/**
- * Batch write items
- */
+async function transactWrite(transactItems) {
+  await docClient.send(new TransactWriteCommand({ TransactItems: transactItems }));
+}
+
+async function batchWriteTable(tableName, requests) {
+  for (let i = 0; i < requests.length; i += 25) {
+    let pending = requests.slice(i, i + 25);
+    do {
+      const response = await docClient.send(new BatchWriteCommand({ RequestItems: { [tableName]: pending } }));
+      pending = response.UnprocessedItems?.[tableName] || [];
+    } while (pending.length > 0);
+  }
+}
+
 async function batchWrite(items) {
-  const chunks = [];
-  for (let i = 0; i < items.length; i += 25) {
-    chunks.push(items.slice(i, i + 25));
-  }
-
-  for (const chunk of chunks) {
-    const command = new BatchWriteCommand({
-      RequestItems: {
-        [TASKS_TABLE]: chunk,
-      },
-    });
-    await docClient.send(command);
-  }
+  return batchWriteTable(TASKS_TABLE, items);
 }
 
-/**
- * Generate ISO timestamp
- */
 function timestamp() {
   return new Date().toISOString();
 }
 
-/**
- * Generate UUID
- */
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -145,6 +141,7 @@ module.exports = {
   docClient,
   TASKS_TABLE,
   USERS_TABLE,
+  GROUPS_TABLE,
   ORGANIZATIONS_TABLE,
   SCHOOLS_TABLE,
   CLASSES_TABLE,
@@ -153,8 +150,12 @@ module.exports = {
   putItem,
   updateItem,
   deleteItem,
+  queryTable,
   queryItems,
+  scanTable,
   scanItems,
+  transactWrite,
+  batchWriteTable,
   batchWrite,
   timestamp,
   generateId,

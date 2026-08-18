@@ -48,3 +48,55 @@ export interface DashboardData {
   tasks_by_module: Module[];
   high_priority_tasks: Task[];
 }
+
+
+export type GroupRole = 'owner' | 'member';
+export type GroupTaskStatus = 'not_started' | 'in_progress' | 'completed';
+
+export interface GroupMember {
+  user_id: string;
+  display_name: string;
+  role: GroupRole;
+  joined_at: string;
+}
+
+export interface GroupInvitation {
+  group_id: string;
+  group_name: string;
+  group_description: string;
+  group_color: string;
+  invited_by_name: string;
+  created_at: string;
+}
+
+export interface GroupTask {
+  task_id: string;
+  group_id: string;
+  title: string;
+  description: string;
+  deadline: string;
+  status: GroupTaskStatus;
+  progress_percentage: number;
+  assigned_to: string | null;
+  created_by: string;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupSummary {
+  group_id: string;
+  name: string;
+  description: string;
+  color: string;
+  owner_id: string;
+  role: GroupRole;
+  joined_at: string;
+}
+
+export interface CollaborativeGroup extends Omit<GroupSummary, 'joined_at'> {
+  created_at: string;
+  updated_at: string;
+  members: GroupMember[];
+  tasks: GroupTask[];
+}

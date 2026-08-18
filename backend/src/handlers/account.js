@@ -208,6 +208,7 @@ function baseProfile(event, existing = null) {
     ...(existing || {}),
     user_id: getUserId(event),
     email,
+    email_normalized: email?.trim().toLowerCase() || existing?.email_normalized,
     display_name: existing?.display_name || tokenName || email?.split('@')[0] || 'User',
     full_name: existing?.full_name || tokenName || 'User',
     profile_picture: existing?.profile_picture || null,
@@ -638,6 +639,30 @@ exports.upsertProfile = async (event) => {
           return await oauthCallback(event, body);
         case 'disconnect':
           return await disconnect(event, body, profile);
+        case 'completeOnboarding': {
+          const version = Number(body.version);
+          if (!Number.isInteger(version) || version < 1 || version > 100) {
+            return error('Invalid onboarding version', 400);
+          }
+          const updateResponse = await docClient.send(new UpdateCommand({
+            TableName: USERS_TABLE,
+            Key: { user_id: userId },
+            UpdateExpression: 'SET #preferences.#required = :false, #preferences.#version = :version, updated_at = :updatedAt',
+            ConditionExpression: 'attribute_exists(user_id) AND attribute_exists(#preferences)',
+            ExpressionAttributeNames: {
+              '#preferences': 'preferences',
+              '#required': 'onboarding_required',
+              '#version': 'onboarding_version',
+            },
+            ExpressionAttributeValues: {
+              ':false': false,
+              ':version': version,
+              ':updatedAt': timestamp(),
+            },
+            ReturnValues: 'ALL_NEW',
+          }));
+          return success(accountData(event, updateResponse.Attributes));
+        }
         default:
           return error('Invalid action', 400);
       }

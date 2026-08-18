@@ -9,6 +9,12 @@ export interface AccountProfile {
   full_name: string;
   profile_picture: string | null;
   email?: string;
+  created_at?: string;
+  preferences?: {
+    onboarding_required?: boolean;
+    onboarding_version?: number;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -45,6 +51,7 @@ interface AccountContextValue extends AccountData {
   error: string;
   refreshAccount: () => Promise<void>;
   updateProfile: (profile: ProfileUpdate) => Promise<void>;
+  completeOnboarding: (version: number) => Promise<void>;
   connect: (provider: ConnectionProvider) => Promise<void>;
   completeOAuth: (code: string, state: string) => Promise<void>;
   disconnect: (provider: ConnectionProvider) => Promise<void>;
@@ -129,6 +136,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       setConnections(emptyConnections);
       setPasswordChangeAvailable(false);
       void refreshAccount();
+
     } else {
       setProfile({ display_name: 'User', full_name: '', profile_picture: null });
       setConnections(emptyConnections);
@@ -154,6 +162,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [applyAccountData, passwordChangeAvailable, refreshSession, updateUserAttributes]);
+
+  const completeOnboarding = useCallback(async (version: number) => {
+    setError('');
+    const response = await accountApi.completeOnboarding(version);
+    applyAccountData(response.data.data);
+  }, [applyAccountData]);
 
   const connect = useCallback(async (provider: ConnectionProvider) => {
     setError('');
@@ -192,11 +206,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     error,
     refreshAccount,
     updateProfile,
+    completeOnboarding,
     connect,
     completeOAuth,
     disconnect,
     isConnected,
-  }), [completeOAuth, connect, connections, disconnect, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, updateProfile]);
+  }), [completeOAuth, completeOnboarding, connect, connections, disconnect, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, updateProfile]);
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 }

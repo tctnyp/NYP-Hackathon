@@ -1,11 +1,12 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, Save, Sun, Upload, UserRound, X } from 'lucide-react';
+import { CircleHelp, Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, Save, Sun, Upload, UserRound, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionProvider, useAccount } from '../contexts/AccountContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ThemePreference, useTheme } from '../contexts/ThemeContext';
 import BackgroundPicker from './BackgroundPicker';
 import NotificationSettings from './NotificationSettings';
+import { openStudentWalkthrough } from './StudentWalkthrough';
 
 const PROFILE_PICTURE_MAX_LENGTH = 200_000;
 const PROFILE_PICTURE_PATTERN = /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
@@ -282,6 +283,16 @@ function AccountSettings() {
             Save profile
           </button>
         </form>
+      </section>
+
+      <section className="card" aria-labelledby="walkthrough-heading">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><CircleHelp size={22} /></div>
+            <div><h2 id="walkthrough-heading" className="text-lg font-semibold">App walkthrough</h2><p className="mt-1 text-sm text-gray-500">Review how tasks, modules, calendar, and groups work together.</p></div>
+          </div>
+          <button type="button" className="btn-secondary shrink-0" onClick={openStudentWalkthrough}>Show walkthrough</button>
+        </div>
       </section>
 
       <section className="card" aria-labelledby="connections-heading">

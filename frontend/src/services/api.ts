@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { Task, Module, DashboardData } from '../types/api';
+import type { Task, Module, DashboardData, CollaborativeGroup, GroupInvitation, GroupSummary, GroupTask } from '../types/api';
 import { tokenStorage, cognitoAuth } from './cognitoAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://your-api-url.com/dev';
@@ -101,6 +101,29 @@ export const modulesApi = {
   delete: (id: string) => apiClient.delete(`/modules/${id}`),
 };
 
+export const groupsApi = {
+  getAll: () => apiClient.get<{ data: { groups: GroupSummary[]; invitations: GroupInvitation[] } }>('/groups'),
+  getById: (id: string) => apiClient.get<{ data: { group: CollaborativeGroup } }>(`/groups/${id}`),
+  create: (data: { name: string; description?: string; color?: string }) => (
+    apiClient.post<{ data: { group: CollaborativeGroup } }>('/groups', data)
+  ),
+  sendInvitation: (id: string, email: string) => (
+    apiClient.post<{ data: { message: string } }>(`/groups/${id}/members`, { email })
+  ),
+  acceptInvitation: (id: string) => apiClient.post(`/groups/${id}/invitations/accept`),
+  declineInvitation: (id: string) => apiClient.delete(`/groups/${id}/invitations`),
+  clearInvitations: (id: string) => apiClient.delete(`/groups/${id}/invitations`),
+  removeMember: (id: string, memberId: string) => apiClient.delete(`/groups/${id}/members/${memberId}`),
+  delete: (id: string) => apiClient.delete(`/groups/${id}`),
+  createTask: (id: string, data: Partial<GroupTask>) => (
+    apiClient.post<{ data: { task: GroupTask } }>(`/groups/${id}/tasks`, data)
+  ),
+  updateTask: (id: string, taskId: string, data: Partial<GroupTask>) => (
+    apiClient.put<{ data: { task: GroupTask } }>(`/groups/${id}/tasks/${taskId}`, data)
+  ),
+  deleteTask: (id: string, taskId: string) => apiClient.delete(`/groups/${id}/tasks/${taskId}`),
+};
+
 export const dashboardApi = {
   get: () => apiClient.get<{ data: DashboardData }>('/dashboard'),
 };
@@ -129,6 +152,9 @@ export const accountApi = {
   get: () => apiClient.get<AccountApiResponse>('/account'),
   updateProfile: (profile: Pick<AccountApiProfile, 'display_name' | 'full_name' | 'profile_picture'>) => (
     apiClient.put<AccountApiResponse>('/account', profile)
+  ),
+  completeOnboarding: (version: number) => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'completeOnboarding', version }, { timeout: 8000 })
   ),
   oauthAuthorize: (provider: 'google' | 'discord') => (
     apiClient.put<AccountApiResponse>('/account', { action: 'oauthAuthorize', provider })
