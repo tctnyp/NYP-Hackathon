@@ -1,10 +1,10 @@
 # Academic Tasks
 
-> **Branch:** `dev` — active feature development and validation.
+> **Branch:** `main` — approved final production source.
 
 Academic Tasks is a responsive academic workload manager for deadlines, assignments, modules, progress, reminders, and study planning.
 
-## Dev feature set
+## Production feature set
 
 - Task creation, editing, filtering, progress tracking, and deadline management
 - Module organization and dashboard summaries
@@ -13,9 +13,11 @@ Academic Tasks is a responsive academic workload manager for deadlines, assignme
 - Android-style bottom navigation and safe-area-aware mobile layout
 - Light, dark, and system themes
 - Solid colors, gradient presets, custom gradients, and local image backgrounds
-- Cognito authentication and administrator controls
-- Scheduled reminder processing
-- Experimental planning endpoints retained for evaluation on `dev`
+- Cognito authentication with Google and Discord federation
+- Account Settings for profile, appearance, password, and provider connections
+- Scheduled reminder processing and SNS notifications
+
+Experimental planning and AWS AI routes, handlers, schemas, and frontend surfaces are intentionally excluded from `main` and remain isolated to `dev`.
 
 ## Source map
 
@@ -24,18 +26,18 @@ frontend/src/components/   User interface and navigation
 frontend/src/contexts/     Authentication, theme, and PWA state
 frontend/src/services/     API, authentication, and calendar integrations
 frontend/public/           Manifest, service worker, and app icons
-backend/src/handlers/      Lambda request handlers
+backend/src/handlers/      Production Lambda handlers
 backend/src/utils/         Shared data and response helpers
-backend/template.yaml      Serverless application resources
+backend/template.yaml      Production serverless resources
 database/                  Reference schemas and sample data
 ```
 
 ## Branch policy
 
-- `dev` contains active and experimental work.
-- `main` contains the approved final production surface and excludes experimental planning endpoints.
+- `dev` contains active and experimental work, including AWS AI functionality.
+- `main` contains the approved final production surface without experimental AI endpoints.
 
-Operational installation, deployment, credentials, and hosting procedures are intentionally not published in this repository.
+Operational credentials and secrets are intentionally not published. Provider and OIDC signing secrets must remain in protected deployment parameters; see [`frontend/OAUTH_SETUP.md`](frontend/OAUTH_SETUP.md) for the non-secret Google and Discord Cognito configuration and redirect contract.
 
 ## More information
 

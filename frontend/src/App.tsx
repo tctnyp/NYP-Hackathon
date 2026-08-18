@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import './index.css';
 
 import { AuthProvider } from './contexts/AuthContext';
+import { AccountProvider } from './contexts/AccountContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { PwaProvider } from './contexts/PwaContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -16,15 +17,16 @@ import Dashboard from './components/Dashboard';
 import TaskList from './components/TaskList';
 import Calendar from './components/Calendar';
 import Modules from './components/Modules';
-import PriorityView from './components/PriorityView';
 import AdminPanel from './components/AdminPanel';
+import AccountSettingsRoute from './components/AccountSettingsRoute';
 
 function App() {
   return (
     <ThemeProvider>
       <PwaProvider>
         <AuthProvider>
-          <Router>
+          <AccountProvider>
+            <Router>
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
@@ -32,6 +34,7 @@ function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/account/settings" element={<AccountSettingsRoute />} />
 
               <Route
                 path="/*"
@@ -44,7 +47,6 @@ function App() {
                         <Route path="/tasks" element={<TaskList />} />
                         <Route path="/calendar" element={<Calendar />} />
                         <Route path="/modules" element={<Modules />} />
-                        <Route path="/priority" element={<PriorityView />} />
                         <Route
                           path="/admin"
                           element={
@@ -59,7 +61,8 @@ function App() {
                 }
               />
             </Routes>
-          </Router>
+            </Router>
+          </AccountProvider>
         </AuthProvider>
       </PwaProvider>
     </ThemeProvider>

@@ -1,7 +1,7 @@
 {
   "name": "academic-task-manager",
   "version": "1.0.0",
-  "description": "AI-powered academic task management platform for polytechnic students",
+  "description": "Academic task management platform for polytechnic students",
   "private": true,
   "workspaces": [
     "frontend",

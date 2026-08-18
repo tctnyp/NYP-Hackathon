@@ -81,21 +81,6 @@ CREATE TABLE reminders (
     INDEX idx_pending (is_sent, reminder_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- AI recommendations table (cache)
-CREATE TABLE ai_recommendations (
-    recommendation_id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(128) NOT NULL,
-    recommendation_type ENUM('priority', 'breakdown', 'workload', 'study_plan') NOT NULL,
-    task_id INT,
-    content JSON NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
-    INDEX idx_user_type (user_id, recommendation_type),
-    INDEX idx_expires (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- Workload snapshots (for analytics)
 CREATE TABLE workload_snapshots (
     snapshot_id INT AUTO_INCREMENT PRIMARY KEY,

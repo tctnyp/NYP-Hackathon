@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { UserPlus, Mail, Lock, User, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import SocialAuthButtons from './SocialAuthButtons';
 
 function Register() {
   const navigate = useNavigate();
@@ -161,6 +162,8 @@ function Register() {
               {loading ? 'Creating account...' : 'Create Account'}
             </button>
           </form>
+
+          <SocialAuthButtons mode="signup" onError={setError} />
 
           <div className="mt-6 text-center text-sm text-gray-600">
             Already have an account?{' '}
