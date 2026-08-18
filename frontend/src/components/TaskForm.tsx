@@ -189,7 +189,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
 
     try {
       setReadingFile(true);
-      setExtractionStatus('Reading assignment fileâ€¦');
+      setExtractionStatus('Reading assignment file…');
       const documentBase64 = arrayBufferToBase64(await file.arrayBuffer());
       setUpload({
         file_name: file.name,
@@ -217,7 +217,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
     setExtracting(true);
     setExtraction(null);
     setExtractionError('');
-    setExtractionStatus('Extracting suggestionsâ€¦');
+    setExtractionStatus('Extracting suggestions…');
     clearUpload();
 
     try {
@@ -367,7 +367,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
                   disabled={!upload || readingFile || extracting}
                   onClick={() => void extractSuggestions()}
                 >
-                  {extracting ? 'Extractingâ€¦' : 'Extract suggestions'}
+                  {extracting ? 'Extracting…' : 'Extract suggestions'}
                 </button>
                 <p id="extraction-status" className="text-sm text-gray-700" role="status" aria-live="polite">
                   {extractionStatus}
@@ -450,7 +450,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
               <label htmlFor="task-module" className="mb-1 block text-sm font-medium text-gray-700">Module</label>
               <select id="task-module" className="input-field" value={form.moduleId} onChange={(event) => updateForm('moduleId', event.target.value)}>
                 <option value="">No module</option>
-                {modules.map((module) => <option key={module.module_id} value={module.module_id}>{module.module_code} â€” {module.module_name}</option>)}
+                {modules.map((module) => <option key={module.module_id} value={module.module_id}>{module.module_code} — {module.module_name}</option>)}
               </select>
               {modulesError && <p className="mt-1.5 text-xs text-amber-700" role="status">{modulesError}</p>}
             </div>
@@ -496,7 +496,7 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
           <div className="flex justify-end gap-3 border-t pt-5">
             <button type="button" className="btn-secondary" onClick={handleClose} disabled={submitting || extracting || readingFile}>Cancel</button>
             <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60" disabled={submitting || extracting || readingFile}>
-              {submitting ? 'Savingâ€¦' : task ? 'Save Changes' : 'Create Task'}
+              {submitting ? 'Saving…' : task ? 'Save Changes' : 'Create Task'}
             </button>
           </div>
         </form>

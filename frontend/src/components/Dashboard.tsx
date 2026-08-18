@@ -183,7 +183,7 @@ function Dashboard() {
       setData(response.data.data);
     } catch (loadError) {
       console.error(loadError);
-      setError('We couldnâ€™t load your overview. Check your connection and try again.');
+      setError('We couldn’t load your overview. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -208,8 +208,8 @@ function Dashboard() {
   if (error && !data) {
     return (
       <div className="page-shell">
-        <header className="page-header"><div><p className="eyebrow"><Sparkles size={14} /> Your day at a glance</p><h1 className="page-title">Overview unavailable</h1><p className="page-subtitle">Your data is safe. We just couldnâ€™t reach it right now.</p></div></header>
-        <div className="section-card empty-state min-h-80"><div className="empty-icon"><RefreshCw size={25} /></div><h2>Letâ€™s try that again</h2><p>Check your connection, then reload your overview.</p><button type="button" className="btn-primary inline-flex items-center gap-2" onClick={() => void loadDashboard()}><RefreshCw size={16} /> Retry</button></div>
+        <header className="page-header"><div><p className="eyebrow"><Sparkles size={14} /> Your day at a glance</p><h1 className="page-title">Overview unavailable</h1><p className="page-subtitle">Your data is safe. We just couldn’t reach it right now.</p></div></header>
+        <div className="section-card empty-state min-h-80"><div className="empty-icon"><RefreshCw size={25} /></div><h2>Let’s try that again</h2><p>Check your connection, then reload your overview.</p><button type="button" className="btn-primary inline-flex items-center gap-2" onClick={() => void loadDashboard()}><RefreshCw size={16} /> Retry</button></div>
       </div>
     );
   }
@@ -225,7 +225,7 @@ function Dashboard() {
   const statCards = [
     { name: 'Total tasks', value: stats.total_tasks, note: 'Across your workspace', icon: ListTodo, tone: 'metric-blue' },
     { name: 'In progress', value: stats.in_progress_tasks, note: 'Keep the momentum', icon: Clock3, tone: 'metric-amber' },
-    { name: 'Overdue', value: stats.overdue_tasks, note: stats.overdue_tasks ? 'Needs attention' : 'Youâ€™re all caught up', icon: AlertCircle, tone: 'metric-red' },
+    { name: 'Overdue', value: stats.overdue_tasks, note: stats.overdue_tasks ? 'Needs attention' : 'You’re all caught up', icon: AlertCircle, tone: 'metric-red' },
     { name: 'Completion', value: `${stats.completion_rate}%`, note: `${stats.completed_tasks} tasks completed`, icon: TrendingUp, tone: 'metric-green' },
   ];
 
@@ -235,7 +235,7 @@ function Dashboard() {
         <div>
           <p className="eyebrow"><Sparkles size={14} /> Your day at a glance</p>
           <h1 className="page-title">{greeting}{firstName ? `, ${firstName}` : ''}</h1>
-          <p className="page-subtitle">Focus on what matters now. Weâ€™ll keep the rest organized.</p>
+          <p className="page-subtitle">Focus on what matters now. We’ll keep the rest organized.</p>
         </div>
         <Link to="/tasks?create=1" className="btn-primary inline-flex items-center justify-center gap-2"><Plus size={18} /> New task</Link>
       </header>
@@ -277,8 +277,8 @@ function Dashboard() {
           {upcoming.length === 0 ? (
             <div className="empty-state min-h-64">
               <div className="empty-icon"><CheckCircle2 size={25} /></div>
-              <h3>Youâ€™re all clear</h3>
-              <p>No upcoming tasks. Enjoy the breathing room or plan whatâ€™s next.</p>
+              <h3>You’re all clear</h3>
+              <p>No upcoming tasks. Enjoy the breathing room or plan what’s next.</p>
               <Link to="/tasks" className="btn-secondary mt-2 inline-flex items-center gap-2"><Plus size={16} /> Add a task</Link>
             </div>
           ) : (
@@ -290,7 +290,7 @@ function Dashboard() {
                     <span className={`status-dot ${overdue ? 'bg-red-500' : task.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-300'}`} />
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate font-semibold group-hover:text-primary-700">{task.title}</h3>
-                      <p className="mt-1 text-xs capitalize text-gray-500">{task.task_type.replace('_', ' ')} Â· {task.progress_percentage}% complete</p>
+                      <p className="mt-1 text-xs capitalize text-gray-500">{task.task_type.replace('_', ' ')} · {task.progress_percentage}% complete</p>
                     </div>
                     <span className={`shrink-0 text-sm font-medium ${overdue ? 'text-red-600' : 'text-gray-500'}`}>{friendlyDeadline(task)}</span>
                     <ArrowRight size={17} className="hidden text-gray-300 transition group-hover:translate-x-0.5 group-hover:text-primary-600 sm:block" />

@@ -275,7 +275,7 @@ function AccountSettings() {
 
       {(accountError || loading) && (
         <div className="card py-3 text-sm" role={accountError ? 'alert' : 'status'}>
-          {loading ? 'Loading account detailsâ€¦' : accountError}
+          {loading ? 'Loading account details…' : accountError}
         </div>
       )}
 
@@ -343,7 +343,7 @@ function AccountSettings() {
             const disconnectAllowed = details?.disconnect_allowed !== false;
             const busy = connectionBusy === provider.id || connectionBusy === 'callback';
             const actionDisabled = busy || (connected && !disconnectAllowed);
-            const actionLabel = busy ? 'Workingâ€¦' : connected ? 'Unlink' : 'Link';
+            const actionLabel = busy ? 'Working…' : connected ? 'Unlink' : 'Link';
             const Icon = provider.icon;
             return (
               <div key={provider.id} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center">
@@ -415,7 +415,7 @@ function AccountSettings() {
                 onClick={() => void handleCalendarAction('enable')}
               >
                 {calendarBusy === 'enable'
-                  ? 'Opening Googleâ€¦'
+                  ? 'Opening Google…'
                   : !calendarSync.linked
                     ? 'Link Google first'
                     : !calendarSync.available
@@ -430,7 +430,7 @@ function AccountSettings() {
                   <RefreshCw className={calendarBusy === 'sync' ? 'animate-spin' : ''} size={17} /> Sync now
                 </button>
                 <button type="button" className="btn-secondary text-red-600" disabled={calendarBusy !== null} onClick={() => void handleCalendarAction('disable')}>
-                  {calendarBusy === 'disable' ? 'Removingâ€¦' : 'Disable'}
+                  {calendarBusy === 'disable' ? 'Removing…' : 'Disable'}
                 </button>
               </>
             )}
@@ -464,7 +464,7 @@ function AccountSettings() {
             {passwordError && <p className="text-sm font-medium text-red-600" role="alert">{passwordError}</p>}
             {passwordMessage && <p className="text-sm font-medium text-green-700" role="status">{passwordMessage}</p>}
             <button className="btn-primary" type="submit" disabled={changingPassword}>
-              {changingPassword ? 'Changing passwordâ€¦' : 'Change password'}
+              {changingPassword ? 'Changing password…' : 'Change password'}
             </button>
           </form>
         </section>

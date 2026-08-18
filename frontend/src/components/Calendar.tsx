@@ -21,7 +21,7 @@ function Calendar() {
       setTasks(response.data.data.tasks || []);
     } catch (loadError) {
       console.error('Error loading calendar tasks:', loadError);
-      setError('We couldnâ€™t load your calendar. Check your connection and try again.');
+      setError('We couldn’t load your calendar. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -77,7 +77,7 @@ function Calendar() {
                   <div className={overdue ? 'date-tile date-tile-overdue' : 'date-tile'}><span>{deadline.toLocaleDateString([], { month: 'short' })}</span><strong>{deadline.getDate()}</strong></div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0"><h3 className="truncate font-semibold sm:text-[1.02rem]">{task.title}</h3><p className={overdue ? 'mt-1 text-sm font-medium text-red-600' : 'mt-1 text-sm text-gray-500'}>{overdue ? 'Overdue Â· ' : ''}{deadline.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p></div>
+                      <div className="min-w-0"><h3 className="truncate font-semibold sm:text-[1.02rem]">{task.title}</h3><p className={overdue ? 'mt-1 text-sm font-medium text-red-600' : 'mt-1 text-sm text-gray-500'}>{overdue ? 'Overdue · ' : ''}{deadline.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p></div>
                       <CalendarActions task={task} />
                     </div>
                     {task.description && <p className="mt-2 line-clamp-2 text-sm leading-6 text-gray-500">{task.description}</p>}
