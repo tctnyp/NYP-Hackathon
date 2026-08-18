@@ -4,7 +4,7 @@ const {
   AdminLinkProviderForUserCommand,
   CognitoIdentityProviderClient,
 } = require('@aws-sdk/client-cognito-identity-provider');
-const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { TransactWriteCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const {
   docClient,
   getItem,
@@ -25,6 +25,7 @@ const {
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION || 'us-east-1' });
 const USER_POOL_ID = process.env.USER_POOL_ID;
+const CALENDAR_CONNECTIONS_TABLE = process.env.CALENDAR_CONNECTIONS_TABLE;
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const SENSITIVE_AUTH_MAX_AGE_SECONDS = 10 * 60;
 const MAX_PROFILE_PICTURE_LENGTH = 200 * 1024;
@@ -34,9 +35,16 @@ const INTERNAL_FIELDS = new Set([
   'oauth_state_google',
   'oauth_connection_discord',
   'oauth_connection_google',
+  'oauth_link_generation_discord',
+  'oauth_link_generation_google',
 ]);
 
-class ProviderError extends Error {}
+class ProviderError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
 
 function hasRecentAuthentication(event) {
   const authTime = Number(getClaims(event).auth_time);
@@ -61,6 +69,10 @@ function stateField(provider) {
 
 function connectionField(provider) {
   return `oauth_connection_${provider}`;
+}
+
+function linkGenerationField(provider) {
+  return `oauth_link_generation_${provider}`;
 }
 
 function stateHash(userId, state) {
@@ -378,27 +390,11 @@ async function exchangeDiscordCode(event, code, config) {
     throw new ProviderError('Discord did not return a valid user profile');
   }
 
-  let cognitoLinked = false;
-  if (!isDiscordOrigin(event)) {
-    if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
-    await cognitoClient.send(new AdminLinkProviderForUserCommand({
-      UserPoolId: USER_POOL_ID,
-      DestinationUser: cognitoDestinationUser(event),
-      SourceUser: {
-        ProviderName: 'Discord',
-        ProviderAttributeName: 'Cognito_Subject',
-        ProviderAttributeValue: user.id,
-      },
-    }));
-    cognitoLinked = true;
-  }
-
   return {
     provider_user_id: user.id,
     username: user.username,
     display_name: typeof user.global_name === 'string' ? user.global_name : user.username,
     ...(typeof user.email === 'string' ? { email: user.email } : {}),
-    cognito_linked: cognitoLinked,
     connected_at: timestamp(),
   };
 }
@@ -428,23 +424,12 @@ async function exchangeGoogleCode(event, code, config) {
     throw new ProviderError('The Google account email must match the signed-in account');
   }
 
-  if (!isGoogleOrigin(event)) {
-    if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
-    await cognitoClient.send(new AdminLinkProviderForUserCommand({
-      UserPoolId: USER_POOL_ID,
-      DestinationUser: cognitoDestinationUser(event),
-      SourceUser: {
-        ProviderName: 'Google',
-        ProviderAttributeName: 'Cognito_Subject',
-        ProviderAttributeValue: user.sub,
-      },
-    }));
-  }
-
   return {
     provider_user_id: user.sub,
     email: user.email,
     ...(typeof user.name === 'string' ? { display_name: user.name } : {}),
+    link_version: randomBytes(16).toString('base64url'),
+    status: 'active',
     connected_at: timestamp(),
   };
 }
@@ -453,7 +438,7 @@ async function consumeState(userId, provider, state) {
   const expectedHash = stateHash(userId, state);
 
   try {
-    await docClient.send(new UpdateCommand({
+    const response = await docClient.send(new UpdateCommand({
       TableName: USERS_TABLE,
       Key: { user_id: userId },
       UpdateExpression: 'REMOVE #oauth_state SET #updated_at = :updated_at',
@@ -469,19 +454,153 @@ async function consumeState(userId, provider, state) {
         ':now': Math.floor(Date.now() / 1000),
         ':updated_at': timestamp(),
       },
+      ReturnValues: 'ALL_OLD',
     }));
-    return true;
+    return response.Attributes?.[stateField(provider)] || null;
   } catch (err) {
     if (err.name === 'ConditionalCheckFailedException') return false;
     throw err;
   }
 }
 
-async function saveConnection(userId, provider, connection) {
-  return updateItem(USERS_TABLE, { user_id: userId }, {
-    [connectionField(provider)]: connection,
-    updated_at: timestamp(),
-  });
+async function saveConnection(userId, provider, connection, expectedGeneration) {
+  try {
+    const response = await docClient.send(new UpdateCommand({
+      TableName: USERS_TABLE,
+      Key: { user_id: userId },
+      UpdateExpression: 'SET #connection = :connection, #updated_at = :updated_at',
+      ConditionExpression: '#generation = :generation AND #connection.#status = :linking AND #connection.#operation = :generation',
+      ExpressionAttributeNames: {
+        '#connection': connectionField(provider),
+        '#generation': linkGenerationField(provider),
+        '#status': 'status',
+        '#operation': 'operation_generation',
+        '#updated_at': 'updated_at',
+      },
+      ExpressionAttributeValues: {
+        ':connection': connection,
+        ':generation': expectedGeneration,
+        ':linking': 'linking',
+        ':updated_at': timestamp(),
+      },
+      ReturnValues: 'ALL_NEW',
+    }));
+    return response.Attributes;
+  } catch (err) {
+    if (err.name === 'ConditionalCheckFailedException') {
+      throw new ProviderError('The connected-account operation changed; start authorization again');
+    }
+    throw err;
+  }
+}
+
+async function acquireLinkOperation(userId, provider, expectedGeneration) {
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: USERS_TABLE,
+      Key: { user_id: userId },
+      UpdateExpression: 'SET #connection = :linking, #updated_at = :updated_at',
+      ConditionExpression: '#generation = :generation AND (attribute_not_exists(#connection.#status) OR #connection.#status = :active)',
+      ExpressionAttributeNames: {
+        '#connection': connectionField(provider),
+        '#generation': linkGenerationField(provider),
+        '#status': 'status',
+        '#updated_at': 'updated_at',
+      },
+      ExpressionAttributeValues: {
+        ':generation': expectedGeneration,
+        ':linking': { status: 'linking', operation_generation: expectedGeneration },
+        ':active': 'active',
+        ':updated_at': timestamp(),
+      },
+    }));
+  } catch (err) {
+    if (err.name === 'ConditionalCheckFailedException') {
+      throw new ProviderError('The connected-account operation changed; start authorization again');
+    }
+    throw err;
+  }
+}
+
+
+async function stageProviderLink(userId, provider, connection, expectedGeneration, cognitoLinkRequired) {
+  const staged = {
+    ...connection,
+    status: 'linking',
+    operation_generation: expectedGeneration,
+    operation_expires_at: Math.floor(Date.now() / 1000) + 120,
+    cognito_link_attempted: cognitoLinkRequired,
+    ...(provider === 'discord' ? { cognito_linked: cognitoLinkRequired } : {}),
+  };
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: USERS_TABLE,
+      Key: { user_id: userId },
+      UpdateExpression: 'SET #connection = :connection, #updated_at = :updated_at',
+      ConditionExpression: '#generation = :generation AND #connection.#status = :linking AND #connection.#operation = :generation',
+      ExpressionAttributeNames: {
+        '#connection': connectionField(provider),
+        '#generation': linkGenerationField(provider),
+        '#status': 'status',
+        '#operation': 'operation_generation',
+        '#updated_at': 'updated_at',
+      },
+      ExpressionAttributeValues: {
+        ':connection': staged,
+        ':generation': expectedGeneration,
+        ':linking': 'linking',
+        ':updated_at': timestamp(),
+      },
+    }));
+  } catch (err) {
+    if (err.name === 'ConditionalCheckFailedException') {
+      throw new ProviderError('The connected-account operation changed; start authorization again');
+    }
+    throw err;
+  }
+  return staged;
+}
+
+async function linkProviderWithCognito(event, provider, providerUserId) {
+  if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+  await cognitoClient.send(new AdminLinkProviderForUserCommand({
+    UserPoolId: USER_POOL_ID,
+    DestinationUser: cognitoDestinationUser(event),
+    SourceUser: {
+      ProviderName: provider === 'google' ? 'Google' : 'Discord',
+      ProviderAttributeName: 'Cognito_Subject',
+      ProviderAttributeValue: providerUserId,
+    },
+  }));
+}
+
+async function releaseLinkOperation(userId, provider, expectedGeneration, stagedProviderUserId = null) {
+  const providerCondition = stagedProviderUserId
+    ? '#connection.#provider = :provider'
+    : 'attribute_not_exists(#connection.#provider)';
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: USERS_TABLE,
+      Key: { user_id: userId },
+      UpdateExpression: 'REMOVE #connection SET #updated_at = :updated_at',
+      ConditionExpression: `#connection.#status = :linking AND #connection.#generation = :generation AND ${providerCondition}`,
+      ExpressionAttributeNames: {
+        '#connection': connectionField(provider),
+        '#status': 'status',
+        '#generation': 'operation_generation',
+        '#provider': 'provider_user_id',
+        '#updated_at': 'updated_at',
+      },
+      ExpressionAttributeValues: {
+        ':linking': 'linking',
+        ':generation': expectedGeneration,
+        ...(stagedProviderUserId ? { ':provider': stagedProviderUserId } : {}),
+        ':updated_at': timestamp(),
+      },
+    }));
+  } catch (err) {
+    if (err.name !== 'ConditionalCheckFailedException') throw err;
+  }
 }
 
 async function removeConnection(userId, provider) {
@@ -511,12 +630,15 @@ async function oauthAuthorize(event, body, profile) {
 
   const userId = getUserId(event);
   const state = `${provider}.${randomBytes(32).toString('base64url')}`;
+  const linkGeneration = randomBytes(16).toString('base64url');
   const expiresAt = Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS;
   await updateItem(USERS_TABLE, { user_id: userId }, {
     [stateField(provider)]: {
       state_hash: stateHash(userId, state),
       expires_at: expiresAt,
+      link_generation: linkGeneration,
     },
+    [linkGenerationField(provider)]: linkGeneration,
     updated_at: timestamp(),
   });
 
@@ -542,7 +664,8 @@ async function oauthCallback(event, body) {
   if (!provider) return error('Invalid or expired OAuth state', 400);
 
   const userId = getUserId(event);
-  if (!await consumeState(userId, provider, body.state)) {
+  const consumedState = await consumeState(userId, provider, body.state);
+  if (!consumedState?.link_generation) {
     return error('Invalid or expired OAuth state', 400);
   }
 
@@ -551,11 +674,107 @@ async function oauthCallback(event, body) {
     return error(`${provider} connection is not configured`, 503);
   }
 
-  const connection = provider === 'discord'
-    ? await exchangeDiscordCode(event, body.code.trim(), config)
-    : await exchangeGoogleCode(event, body.code.trim(), config);
-  const profile = await saveConnection(userId, provider, connection);
-  return success(accountData(event, profile));
+  await acquireLinkOperation(userId, provider, consumedState.link_generation);
+  let stagedProviderUserId = null;
+  let cognitoLinkInFlight = false;
+  try {
+    const connection = provider === 'discord'
+      ? await exchangeDiscordCode(event, body.code.trim(), config)
+      : await exchangeGoogleCode(event, body.code.trim(), config);
+    const cognitoLinkRequired = provider === 'discord' ? !isDiscordOrigin(event) : !isGoogleOrigin(event);
+    if (cognitoLinkRequired) {
+      await stageProviderLink(userId, provider, connection, consumedState.link_generation, true);
+      stagedProviderUserId = connection.provider_user_id;
+      cognitoLinkInFlight = true;
+      await linkProviderWithCognito(event, provider, connection.provider_user_id);
+      cognitoLinkInFlight = false;
+    }
+    const finalizedConnection = {
+      ...connection,
+      status: 'active',
+      ...(provider === 'discord' ? { cognito_linked: cognitoLinkRequired } : {}),
+    };
+    const updatedProfile = await saveConnection(userId, provider, finalizedConnection, consumedState.link_generation);
+    return success(accountData(event, updatedProfile));
+  } catch (callbackError) {
+    const definitiveLinkFailure = cognitoLinkInFlight
+      && ['AliasExistsException', 'InvalidParameterException', 'ResourceConflictException'].includes(callbackError.name);
+    await releaseLinkOperation(
+      userId,
+      provider,
+      consumedState.link_generation,
+      definitiveLinkFailure ? stagedProviderUserId : null,
+    );
+    throw callbackError;
+  }
+}
+
+async function beginDisconnect(userId, provider, connection) {
+  const generation = randomBytes(16).toString('base64url');
+  const unlinking = { ...(connection || {}), status: 'unlinking', disable_completed: false };
+  const userUpdate = {
+    TableName: USERS_TABLE,
+    Key: { user_id: userId },
+    UpdateExpression: 'SET #generation = :generation, #connection = :connection, #updated_at = :updated_at REMOVE #oauth_state',
+    ConditionExpression: 'attribute_not_exists(#connection.#status) OR #connection.#status <> :linking OR (#connection.#operation_expires_at < :now AND attribute_exists(#connection.#provider))',
+    ExpressionAttributeNames: {
+      '#generation': linkGenerationField(provider),
+      '#connection': connectionField(provider),
+      '#status': 'status',
+      '#operation_expires_at': 'operation_expires_at',
+      '#provider': 'provider_user_id',
+      '#oauth_state': stateField(provider),
+      '#updated_at': 'updated_at',
+    },
+    ExpressionAttributeValues: {
+      ':generation': generation,
+      ':connection': unlinking,
+      ':linking': 'linking',
+      ':now': Math.floor(Date.now() / 1000),
+      ':updated_at': timestamp(),
+    },
+  };
+
+  try {
+    if (provider === 'google' && CALENDAR_CONNECTIONS_TABLE) {
+      await docClient.send(new TransactWriteCommand({
+        TransactItems: [
+          { Update: userUpdate },
+          {
+            ConditionCheck: {
+              TableName: CALENDAR_CONNECTIONS_TABLE,
+              Key: { user_id: userId },
+              ConditionExpression: 'attribute_not_exists(#user_id)',
+              ExpressionAttributeNames: { '#user_id': 'user_id' },
+            },
+          },
+        ],
+      }));
+      return unlinking;
+    }
+
+    const response = await docClient.send(new UpdateCommand({ ...userUpdate, ReturnValues: 'ALL_NEW' }));
+    return response.Attributes?.[connectionField(provider)] || unlinking;
+  } catch (err) {
+    if (err.name === 'ConditionalCheckFailedException' || err.name === 'TransactionCanceledException') {
+      throw new ProviderError(
+        provider === 'google'
+          ? 'Finish Google Calendar cleanup and any account linking operation before disconnecting Google'
+          : 'Account linking is still in progress; try disconnecting again shortly',
+        409,
+      );
+    }
+    throw err;
+  }
+}
+
+async function markProviderDisableComplete(userId, provider, connection) {
+  const completed = { ...connection, status: 'unlinking', disable_completed: true };
+  await updateItem(USERS_TABLE, { user_id: userId }, {
+    [connectionField(provider)]: completed,
+    updated_at: timestamp(),
+  });
+  return completed;
 }
 
 async function disconnect(event, body, profile) {
@@ -563,46 +782,45 @@ async function disconnect(event, body, profile) {
   if (!provider) return error('provider must be discord or google', 400);
   if (!hasRecentAuthentication(event)) return recentAuthenticationError();
 
-  if (provider === 'google') {
-    if (isGoogleOrigin(event)) {
-      return error('The primary Google sign-in cannot be disconnected', 409);
-    }
+  const userId = getUserId(event);
+  profile = await getItem(USERS_TABLE, { user_id: userId }) || profile;
 
-    const providerUserId = profile?.oauth_connection_google?.provider_user_id || googleIdentity(event)?.userId;
-    if (providerUserId) {
-      if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+  if (provider === 'google' && isGoogleOrigin(event)) {
+    return error('The primary Google sign-in cannot be disconnected', 409);
+  }
+  if (provider === 'discord' && isDiscordOrigin(event)) {
+    return error('The primary Discord sign-in cannot be disconnected', 409);
+  }
+
+  const storedConnection = profile?.[connectionField(provider)];
+  const claimIdentity = provider === 'google' ? googleIdentity(event) : discordIdentity(event);
+  const providerUserId = storedConnection?.provider_user_id || claimIdentity?.userId;
+  let unlinking = storedConnection;
+  if (storedConnection?.status !== 'unlinking') {
+    unlinking = await beginDisconnect(userId, provider, storedConnection || { provider_user_id: providerUserId });
+  }
+
+  const shouldDisableCognito = Boolean(providerUserId)
+    && (provider === 'google' || unlinking?.cognito_linked === true || claimIdentity?.userId === providerUserId)
+    && unlinking?.disable_completed !== true;
+  if (shouldDisableCognito) {
+    if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+    try {
       await cognitoClient.send(new AdminDisableProviderForUserCommand({
         UserPoolId: USER_POOL_ID,
         User: {
-          ProviderName: 'Google',
+          ProviderName: provider === 'google' ? 'Google' : 'Discord',
           ProviderAttributeName: 'Cognito_Subject',
           ProviderAttributeValue: providerUserId,
         },
       }));
+    } catch (unlinkError) {
+      if (unlinkError.name !== 'ResourceNotFoundException') throw unlinkError;
     }
+    unlinking = await markProviderDisableComplete(userId, provider, unlinking || { provider_user_id: providerUserId });
   }
 
-  if (provider === 'discord') {
-    if (isDiscordOrigin(event)) {
-      return error('The primary Discord sign-in cannot be disconnected', 409);
-    }
-
-    const connection = profile?.oauth_connection_discord;
-    const providerUserId = connection?.provider_user_id || discordIdentity(event)?.userId;
-    if (providerUserId && connection?.cognito_linked === true) {
-      if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
-      await cognitoClient.send(new AdminDisableProviderForUserCommand({
-        UserPoolId: USER_POOL_ID,
-        User: {
-          ProviderName: 'Discord',
-          ProviderAttributeName: 'Cognito_Subject',
-          ProviderAttributeValue: providerUserId,
-        },
-      }));
-    }
-  }
-
-  const updatedProfile = await removeConnection(getUserId(event), provider);
+  const updatedProfile = await removeConnection(userId, provider);
   return success(accountData(event, updatedProfile));
 }
 
@@ -683,7 +901,7 @@ exports.upsertProfile = async (event) => {
     return success(accountData(event, updatedProfile));
   } catch (err) {
     console.error('Account update failed:', err.message);
-    if (err instanceof ProviderError) return error(err.message, 400);
+    if (err instanceof ProviderError) return error(err.message, err.statusCode);
     if (['AliasExistsException', 'InvalidParameterException', 'ResourceConflictException'].includes(err.name)) {
       return error('The Google account is already linked or cannot be linked', 409);
     }

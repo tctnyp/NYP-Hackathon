@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { accountApi } from '../services/api';
+import { accountApi, googleCalendarApi, GoogleCalendarSyncStatus } from '../services/api';
 import { useAuth } from './AuthContext';
 
 export type ConnectionProvider = 'google' | 'discord';
@@ -38,6 +38,7 @@ export interface AccountData {
   profile: AccountProfile;
   connections: AccountConnections;
   password_change_available: boolean;
+  calendar_sync: GoogleCalendarSyncStatus;
 }
 
 interface ProfileUpdate {
@@ -55,10 +56,19 @@ interface AccountContextValue extends AccountData {
   connect: (provider: ConnectionProvider) => Promise<void>;
   completeOAuth: (code: string, state: string) => Promise<void>;
   disconnect: (provider: ConnectionProvider) => Promise<void>;
+  enableCalendarSync: () => Promise<void>;
+  syncCalendarNow: () => Promise<void>;
+  disableCalendarSync: () => Promise<void>;
   isConnected: (provider: ConnectionProvider) => boolean;
 }
 
 const emptyConnections: AccountConnections = { google: false, discord: false };
+const emptyCalendarSync: GoogleCalendarSyncStatus = {
+  linked: false,
+  available: false,
+  enabled: false,
+  status: 'disabled',
+};
 const AccountContext = createContext<AccountContextValue | undefined>(undefined);
 
 function errorMessage(error: unknown): string {
@@ -94,6 +104,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     email: user?.email,
   });
   const [connections, setConnections] = useState<AccountConnections>(emptyConnections);
+  const [calendarSync, setCalendarSync] = useState<GoogleCalendarSyncStatus>(emptyCalendarSync);
   const [passwordChangeAvailable, setPasswordChangeAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -109,6 +120,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     if (typeof data.password_change_available === 'boolean') {
       setPasswordChangeAvailable(data.password_change_available);
     }
+    if (data.calendar_sync) {
+      setCalendarSync(data.calendar_sync);
+    }
   }, []);
 
   const refreshAccount = useCallback(async () => {
@@ -116,8 +130,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError('');
     try {
-      const response = await accountApi.get();
-      applyAccountData(response.data.data);
+      const [accountResponse, calendarResponse] = await Promise.all([
+        accountApi.get(),
+        googleCalendarApi.get(),
+      ]);
+      applyAccountData(accountResponse.data.data);
+      setCalendarSync(calendarResponse.data.data.calendar_sync);
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -134,12 +152,14 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         email: user.email,
       });
       setConnections(emptyConnections);
+      setCalendarSync(emptyCalendarSync);
       setPasswordChangeAvailable(false);
       void refreshAccount();
 
     } else {
       setProfile({ display_name: 'User', full_name: '', profile_picture: null });
       setConnections(emptyConnections);
+      setCalendarSync(emptyCalendarSync);
       setPasswordChangeAvailable(false);
     }
   }, [claimDisplayName, refreshAccount, user]);
@@ -180,17 +200,43 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   const completeOAuth = useCallback(async (code: string, state: string) => {
     setError('');
-    const response = await accountApi.oauthCallback(code, state);
-    applyAccountData(response.data.data);
+    if (state.startsWith('calendar.')) {
+      const response = await googleCalendarApi.callback(code, state);
+      setCalendarSync(response.data.data.calendar_sync);
+    } else {
+      const response = await accountApi.oauthCallback(code, state);
+      applyAccountData(response.data.data);
+    }
     await refreshAccount();
   }, [applyAccountData, refreshAccount]);
+
+  const enableCalendarSync = useCallback(async () => {
+    setError('');
+    const response = await googleCalendarApi.authorize();
+    const authorizationUrl = response.data.data.authorization_url;
+    if (!authorizationUrl) throw new Error('The Calendar service did not return an authorization URL.');
+    window.location.assign(authorizationUrl);
+  }, []);
+
+  const syncCalendarNow = useCallback(async () => {
+    setError('');
+    const response = await googleCalendarApi.sync();
+    setCalendarSync(response.data.data.calendar_sync);
+  }, []);
+
+  const disableCalendarSync = useCallback(async () => {
+    setError('');
+    const response = await googleCalendarApi.disable();
+    setCalendarSync(response.data.data.calendar_sync);
+  }, []);
 
   const disconnect = useCallback(async (provider: ConnectionProvider) => {
     setError('');
     const response = await accountApi.disconnect(provider);
     applyAccountData(response.data.data);
+    await refreshSession();
     await refreshAccount();
-  }, [applyAccountData, refreshAccount]);
+  }, [applyAccountData, refreshAccount, refreshSession]);
 
   const isConnected = useCallback((provider: ConnectionProvider) => {
     if (provider === 'google' && hasGoogleIdentity(user)) return true;
@@ -202,6 +248,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     profile,
     connections,
     password_change_available: passwordChangeAvailable,
+    calendar_sync: calendarSync,
     loading,
     error,
     refreshAccount,
@@ -210,8 +257,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     connect,
     completeOAuth,
     disconnect,
+    enableCalendarSync,
+    syncCalendarNow,
+    disableCalendarSync,
     isConnected,
-  }), [completeOAuth, completeOnboarding, connect, connections, disconnect, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, updateProfile]);
+  }), [calendarSync, completeOAuth, completeOnboarding, connect, connections, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 }

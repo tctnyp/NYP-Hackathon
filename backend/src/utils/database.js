@@ -107,8 +107,27 @@ async function scanTable(tableName, params = {}) {
   return items;
 }
 
+/**
+ * Scan one DynamoDB page, including the continuation key.
+ */
+async function scanPage(params) {
+  const command = new ScanCommand({
+    TableName: TASKS_TABLE,
+    ...params,
+  });
+  const response = await docClient.send(command);
+  return {
+    Items: response.Items || [],
+    LastEvaluatedKey: response.LastEvaluatedKey || null,
+  };
+}
+
+/**
+ * Scan items from the first DynamoDB page.
+ */
 async function scanItems(params) {
-  return scanTable(TASKS_TABLE, params);
+  const page = await scanPage(params);
+  return page.Items;
 }
 
 async function transactWrite(transactItems) {
@@ -153,6 +172,7 @@ module.exports = {
   queryTable,
   queryItems,
   scanTable,
+  scanPage,
   scanItems,
   transactWrite,
   batchWriteTable,

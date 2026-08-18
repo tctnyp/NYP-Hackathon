@@ -69,22 +69,37 @@ exports.createModule = async (event) => {
       return error(`Missing required fields: ${required.join(', ')}`, 400);
     }
 
-    const { module_code, module_name, color = '#3B82F6' } = body;
+    const rawModuleCode = body.module_code;
+    const rawModuleName = body.module_name;
+    const rawColor = body.color ?? '#3B82F6';
+    if (typeof rawModuleCode !== 'string' || typeof rawModuleName !== 'string' || typeof rawColor !== 'string') {
+      return error('Module code, name, and color must be strings', 400);
+    }
+
+    const moduleCode = rawModuleCode.trim().toUpperCase();
+    const moduleName = rawModuleName.trim();
+    const color = rawColor.trim();
+    if (!moduleCode || !moduleName) {
+      return error('Module code and name cannot be empty', 400);
+    }
+    if (moduleCode.length > 30 || moduleName.length > 120) {
+      return error('Module code or name is too long', 400);
+    }
+    if (!/^#[0-9A-F]{6}$/i.test(color)) {
+      return error('Module color must be a six-digit hex color', 400);
+    }
+
     const moduleId = generateId();
     const now = timestamp();
 
-    // Check for duplicate module code
+    // Check for duplicate module code using the normalized value stored below.
     const existingModules = await queryItems({
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-      ExpressionAttributeValues: {
-        ':pk': `USER#${userId}`,
-        ':sk': 'MODULE#',
-      },
       FilterExpression: 'module_code = :code',
       ExpressionAttributeValues: {
         ':pk': `USER#${userId}`,
         ':sk': 'MODULE#',
-        ':code': module_code,
+        ':code': moduleCode,
       },
     });
 
@@ -98,8 +113,8 @@ exports.createModule = async (event) => {
       entity_type: 'MODULE',
       module_id: moduleId,
       user_id: userId,
-      module_code,
-      module_name,
+      module_code: moduleCode,
+      module_name: moduleName,
       color,
       created_at: now,
     };

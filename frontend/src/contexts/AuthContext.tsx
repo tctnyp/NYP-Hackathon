@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { cognitoAuth, decodeJWT, tokenStorage } from '../services/cognitoAuth';
+import { AUTH_STORAGE_CHANGE_EVENT, type AuthStoragePreference } from '../services/authStorage';
 
 export interface CognitoUser {
   sub: string;
@@ -12,7 +13,7 @@ export interface CognitoUser {
 interface AuthContextType {
   user: CognitoUser | null;
   loading: boolean;
-  signIn: (username: string, password: string) => Promise<void>;
+  signIn: (username: string, password: string, storagePreference?: AuthStoragePreference) => Promise<void>;
   signUp: (username: string, password: string, email: string) => Promise<void>;
   confirmSignUp: (username: string, code: string) => Promise<void>;
   resendConfirmationCode: (username: string) => Promise<void>;
@@ -103,8 +104,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
     checkSession();
   }, []);
 
-  const signIn = async (username: string, password: string) => {
-    const result = await cognitoAuth.signIn(username, password);
+  useEffect(() => {
+    const synchronizeUser = () => {
+      const idToken = tokenStorage.getIdToken();
+      setUser(idToken ? extractUserFromToken(idToken) : null);
+    };
+
+    window.addEventListener(AUTH_STORAGE_CHANGE_EVENT, synchronizeUser);
+    return () => window.removeEventListener(AUTH_STORAGE_CHANGE_EVENT, synchronizeUser);
+  }, []);
+
+  const signIn = async (
+    username: string,
+    password: string,
+    storagePreference: AuthStoragePreference = 'session',
+  ) => {
+    const result = await cognitoAuth.signIn(username, password, storagePreference);
 
     // Check if it's a challenge response
     if ('ChallengeName' in result) {

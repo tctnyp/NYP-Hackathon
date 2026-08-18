@@ -1,16 +1,31 @@
 // Dependency-free Cognito authentication client using fetch API
 
+import {
+  tokenStorage,
+  type AuthStoragePreference,
+  type AuthTokens,
+} from './authStorage';
+
+export { tokenStorage } from './authStorage';
+
 const COGNITO_REGION = import.meta.env.VITE_COGNITO_REGION;
 const COGNITO_CLIENT_ID = import.meta.env.VITE_COGNITO_CLIENT_ID;
 
 const COGNITO_IDP_ENDPOINT = `https://cognito-idp.${COGNITO_REGION}.amazonaws.com/`;
 
-interface CognitoTokens {
-  IdToken: string;
-  AccessToken: string;
-  RefreshToken: string;
-  ExpiresIn: number;
+const OAUTH_CODE_VERIFIER_KEY = 'nyp.auth.oauth.code-verifier.v1';
+const OAUTH_STATE_KEY = 'nyp.auth.oauth.state.v1';
+const OAUTH_RETURN_TO_KEY = 'nyp.auth.oauth.return-to.v1';
+const OAUTH_STORAGE_PREFERENCE_KEY = 'nyp.auth.oauth.persistence.v1';
+
+function clearOAuthTransactionStorage(includeReturnPath = true) {
+  sessionStorage.removeItem(OAUTH_CODE_VERIFIER_KEY);
+  sessionStorage.removeItem(OAUTH_STATE_KEY);
+  sessionStorage.removeItem(OAUTH_STORAGE_PREFERENCE_KEY);
+  if (includeReturnPath) sessionStorage.removeItem(OAUTH_RETURN_TO_KEY);
 }
+
+type CognitoTokens = AuthTokens;
 
 interface ChallengeResponse {
   ChallengeName: string;
@@ -90,46 +105,6 @@ export function decodeJWT(token: string): any {
   }
 }
 
-// Token storage in sessionStorage
-export const tokenStorage = {
-  setTokens(tokens: CognitoTokens) {
-    sessionStorage.setItem('idToken', tokens.IdToken);
-    sessionStorage.setItem('accessToken', tokens.AccessToken);
-    sessionStorage.setItem('refreshToken', tokens.RefreshToken);
-    sessionStorage.setItem('tokenExpiry', (Date.now() + tokens.ExpiresIn * 1000).toString());
-  },
-
-  getIdToken(): string | null {
-    return sessionStorage.getItem('idToken');
-  },
-
-  getAccessToken(): string | null {
-    return sessionStorage.getItem('accessToken');
-  },
-
-  getRefreshToken(): string | null {
-    return sessionStorage.getItem('refreshToken');
-  },
-
-  getTokenExpiry(): number | null {
-    const expiry = sessionStorage.getItem('tokenExpiry');
-    return expiry ? parseInt(expiry, 10) : null;
-  },
-
-  clearTokens() {
-    sessionStorage.removeItem('idToken');
-    sessionStorage.removeItem('accessToken');
-    sessionStorage.removeItem('refreshToken');
-    sessionStorage.removeItem('tokenExpiry');
-  },
-
-  isTokenExpired(): boolean {
-    const expiry = this.getTokenExpiry();
-    if (!expiry) return true;
-    return Date.now() >= expiry - 60000; // Refresh 1 minute before expiry
-  },
-};
-
 // Cognito Auth API
 export const cognitoAuth = {
   async signUp(username: string, password: string, email: string): Promise<{ userSub: string }> {
@@ -163,7 +138,12 @@ export const cognitoAuth = {
     });
   },
 
-  async signIn(username: string, password: string): Promise<CognitoTokens | ChallengeResponse> {
+  async signIn(
+    username: string,
+    password: string,
+    storagePreference: AuthStoragePreference = 'session',
+  ): Promise<CognitoTokens | ChallengeResponse> {
+    tokenStorage.setPreference(storagePreference);
     const data = await cognitoRequest('AWSCognitoIdentityProviderService.InitiateAuth', {
       ClientId: COGNITO_CLIENT_ID,
       AuthFlow: 'USER_PASSWORD_AUTH',
@@ -180,7 +160,9 @@ export const cognitoAuth = {
         RefreshToken: data.AuthenticationResult.RefreshToken,
         ExpiresIn: data.AuthenticationResult.ExpiresIn,
       };
-      tokenStorage.setTokens(tokens);
+      if (!tokenStorage.setTokens(tokens, storagePreference)) {
+        throw new Error('This browser could not store the authentication session');
+      }
       return tokens;
     }
 
@@ -193,6 +175,7 @@ export const cognitoAuth = {
   },
 
   async refreshTokens(): Promise<CognitoTokens> {
+    const writeGeneration = tokenStorage.getGeneration();
     const refreshToken = tokenStorage.getRefreshToken();
     if (!refreshToken) {
       throw new Error('No refresh token available');
@@ -213,19 +196,24 @@ export const cognitoAuth = {
       ExpiresIn: data.AuthenticationResult.ExpiresIn,
     };
 
-    tokenStorage.setTokens(tokens);
+    if (!tokenStorage.setTokens(tokens, undefined, writeGeneration)) {
+      throw new Error('Session changed while tokens were refreshing');
+    }
     return tokens;
   },
 
   async signOut(): Promise<void> {
     const accessToken = tokenStorage.getAccessToken();
+    clearOAuthTransactionStorage();
+    // Clear first so an in-flight refresh cannot restore a session after sign-out.
+    tokenStorage.clearTokens();
     if (accessToken) {
       try {
         await cognitoRequest('AWSCognitoIdentityProviderService.GlobalSignOut', {
           AccessToken: accessToken,
         });
       } catch (e) {
-        // Ignore errors on sign out
+        // Local sign-out still succeeds if Cognito is unreachable.
       }
     }
     tokenStorage.clearTokens();
@@ -281,6 +269,7 @@ export const cognitoAuth = {
       throw new Error('Cognito social authentication is not configured');
     }
 
+    clearOAuthTransactionStorage();
     const { codeVerifier, codeChallenge } = await generatePKCE();
     const state = generateState();
 
@@ -288,9 +277,10 @@ export const cognitoAuth = {
     const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//')
       ? returnTo
       : '/dashboard';
-    sessionStorage.setItem('pkce_code_verifier', codeVerifier);
-    sessionStorage.setItem('oauth_state', state);
-    sessionStorage.setItem('oauth_return_to', safeReturnTo);
+    sessionStorage.setItem(OAUTH_CODE_VERIFIER_KEY, codeVerifier);
+    sessionStorage.setItem(OAUTH_STATE_KEY, state);
+    sessionStorage.setItem(OAUTH_RETURN_TO_KEY, safeReturnTo);
+    sessionStorage.setItem(OAUTH_STORAGE_PREFERENCE_KEY, tokenStorage.getPreference() || 'session');
 
     // Normalize values so an optional protocol/trailing slash does not break OAuth.
     const normalizedDomain = cognitoDomain.replace(/^https?:\/\//i, '').replace(/\/$/, '');
@@ -311,9 +301,13 @@ export const cognitoAuth = {
     window.location.href = `https://${normalizedDomain}/oauth2/authorize?${params.toString()}`;
   },
 
+  clearOAuthTransaction() {
+    clearOAuthTransactionStorage();
+  },
+
   consumeOAuthReturnTo(): string {
-    const returnTo = sessionStorage.getItem('oauth_return_to');
-    sessionStorage.removeItem('oauth_return_to');
+    const returnTo = sessionStorage.getItem(OAUTH_RETURN_TO_KEY);
+    sessionStorage.removeItem(OAUTH_RETURN_TO_KEY);
 
     return returnTo?.startsWith('/') && !returnTo.startsWith('//')
       ? returnTo
@@ -321,8 +315,12 @@ export const cognitoAuth = {
   },
 
   async handleOAuthCallback(code: string, state: string): Promise<CognitoTokens> {
-    const storedState = sessionStorage.getItem('oauth_state');
-    const codeVerifier = sessionStorage.getItem('pkce_code_verifier');
+    const storedState = sessionStorage.getItem(OAUTH_STATE_KEY);
+    const codeVerifier = sessionStorage.getItem(OAUTH_CODE_VERIFIER_KEY);
+    const storedPreference = sessionStorage.getItem(OAUTH_STORAGE_PREFERENCE_KEY);
+    const storagePreference: AuthStoragePreference = storedPreference === 'persistent'
+      ? 'persistent'
+      : 'session';
 
     if (!storedState || storedState !== state) {
       throw new Error('Invalid state parameter');
@@ -333,8 +331,9 @@ export const cognitoAuth = {
     }
 
     // Clean up
-    sessionStorage.removeItem('oauth_state');
-    sessionStorage.removeItem('pkce_code_verifier');
+    sessionStorage.removeItem(OAUTH_STATE_KEY);
+    sessionStorage.removeItem(OAUTH_CODE_VERIFIER_KEY);
+    sessionStorage.removeItem(OAUTH_STORAGE_PREFERENCE_KEY);
 
     const cognitoDomain = import.meta.env.VITE_COGNITO_DOMAIN;
     // Normalize domain - remove https:// prefix if present
@@ -372,7 +371,9 @@ export const cognitoAuth = {
       ExpiresIn: data.expires_in,
     };
 
-    tokenStorage.setTokens(tokens);
+    if (!tokenStorage.setTokens(tokens, storagePreference)) {
+      throw new Error('This browser could not store the authentication session');
+    }
     return tokens;
   },
 };

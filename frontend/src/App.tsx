@@ -20,6 +20,7 @@ import Modules from './components/Modules';
 import Groups from './components/Groups';
 import AdminPanel from './components/AdminPanel';
 import AccountSettingsRoute from './components/AccountSettingsRoute';
+import LoginStoragePrompt from './components/LoginStorageConsent';
 
 function App() {
   return (
@@ -64,6 +65,7 @@ function App() {
               />
             </Routes>
             </Router>
+            <LoginStoragePrompt />
           </AccountProvider>
         </PwaProvider>
       </AuthProvider>

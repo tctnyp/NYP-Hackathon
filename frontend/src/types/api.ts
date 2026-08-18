@@ -38,14 +38,38 @@ export interface DashboardStatistics {
   total_tasks: number;
   completed_tasks: number;
   in_progress_tasks: number;
+  not_started_tasks: number;
   overdue_tasks: number;
+  actual_overdue: number;
+  due_today: number;
+  due_this_week: number;
+  total_estimated_hours: number;
+  avg_priority: number;
   completion_rate: number;
+}
+
+export interface DashboardModuleSummary {
+  module_code: string;
+  module_name: string;
+  color: string;
+  total_tasks: number;
+  completed_tasks: number;
+  active_tasks: number;
+}
+
+export interface DashboardWorkloadWeek {
+  week_start: string;
+  task_count: number;
+  total_hours: number;
+  high_priority_count: number;
 }
 
 export interface DashboardData {
   statistics: DashboardStatistics;
   upcoming_tasks: Task[];
-  tasks_by_module: Module[];
+  tasks_by_module: DashboardModuleSummary[];
+  workload_by_week: DashboardWorkloadWeek[];
+  recently_completed: Task[];
   high_priority_tasks: Task[];
 }
 

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CalendarDays, Download, RefreshCw } from 'lucide-react';
+import { AlertCircle, CalendarDays, Download, ExternalLink, RefreshCw, Settings } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { tasksApi } from '../services/api';
+import { useAccount } from '../contexts/AccountContext';
 import { exportTasksToIcs } from '../services/calendar';
 import type { Task } from '../types/api';
 import CalendarActions from './CalendarActions';
 
 function Calendar() {
+  const { calendar_sync: calendarSync } = useAccount();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -33,9 +36,26 @@ function Calendar() {
   return (
     <div className="page-shell">
       <header className="page-header">
-        <div><p className="eyebrow"><CalendarDays size={14} /> Schedule</p><h1 className="page-title">Calendar</h1><p className="page-subtitle">See every deadline in order and send tasks to the calendar you already use.</p></div>
-        <button type="button" className="btn-primary inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50" disabled={agenda.length === 0} onClick={() => exportTasksToIcs(agenda)}><Download size={18} /> Export all</button>
+        <div><p className="eyebrow"><CalendarDays size={14} /> Schedule</p><h1 className="page-title">Calendar</h1><p className="page-subtitle">Google Calendar is the default. You can also export deadlines to any calendar app.</p></div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50" disabled={agenda.length === 0} onClick={() => exportTasksToIcs(agenda)}><Download size={18} /> Export .ics</button>
+          <a className="btn-primary inline-flex items-center justify-center gap-2" href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noreferrer"><CalendarDays size={19} /> Open Google Calendar <ExternalLink size={15} /></a>
+        </div>
       </header>
+
+      <section className="section-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" aria-labelledby="calendar-sync-summary">
+        <div>
+          <h2 id="calendar-sync-summary" className="section-title">Automatic Google Calendar updates</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            {calendarSync.enabled
+              ? 'On — task changes are synchronized automatically.'
+              : calendarSync.linked
+                ? 'Google is linked. Enable separate Calendar permission to synchronize automatically.'
+                : 'Link Google in Account Settings to enable optional automatic synchronization.'}
+          </p>
+        </div>
+        <Link className="btn-secondary inline-flex shrink-0 items-center justify-center gap-2" to="/account/settings"><Settings size={17} /> {calendarSync.enabled ? 'Sync settings' : 'Set up sync'}</Link>
+      </section>
 
       {error && <div className="alert-error" role="alert"><span className="flex items-center gap-2"><AlertCircle size={18} /> {error}</span><button type="button" className="inline-flex items-center gap-1.5 font-semibold" onClick={() => void loadTasks()}><RefreshCw size={15} /> Retry</button></div>}
 

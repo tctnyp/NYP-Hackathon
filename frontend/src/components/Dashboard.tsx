@@ -2,9 +2,163 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { dashboardApi } from '../services/api';
 import { AlertCircle, ArrowRight, CheckCircle2, Clock3, ListTodo, Plus, RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
-import type { DashboardData, Task } from '../types/api';
+import type { DashboardData, DashboardModuleSummary, DashboardStatistics, DashboardWorkloadWeek, Task } from '../types/api';
 import { useAccount } from '../contexts/AccountContext';
 import NotificationPrompt from './NotificationPrompt';
+
+const statusColors = {
+  completed: '#16a34a',
+  inProgress: '#2563eb',
+  overdue: '#dc2626',
+  notStarted: '#d97706',
+};
+
+const emptyStats: DashboardStatistics = {
+  total_tasks: 0,
+  completed_tasks: 0,
+  in_progress_tasks: 0,
+  not_started_tasks: 0,
+  overdue_tasks: 0,
+  actual_overdue: 0,
+  due_today: 0,
+  due_this_week: 0,
+  total_estimated_hours: 0,
+  avg_priority: 0,
+  completion_rate: 0,
+};
+
+function safeColor(value: string | undefined) {
+  return value && /^#[0-9a-f]{6}$/i.test(value) ? value : '#2563eb';
+}
+
+function shortWeekLabel(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function EmptyGraph({ message }: { message: string }) {
+  return <p className="chart-empty">{message}</p>;
+}
+
+function TaskStatusGraph({ stats }: { stats: DashboardStatistics }) {
+  const slices = [
+    { label: 'Completed', value: stats.completed_tasks, color: statusColors.completed },
+    { label: 'In progress', value: stats.in_progress_tasks, color: statusColors.inProgress },
+    { label: 'Overdue', value: stats.overdue_tasks, color: statusColors.overdue },
+    { label: 'Not started', value: stats.not_started_tasks, color: statusColors.notStarted },
+  ];
+  const total = slices.reduce((sum, slice) => sum + slice.value, 0);
+  let cursor = 0;
+  const stops = slices.map((slice) => {
+    const start = cursor;
+    cursor += total ? (slice.value / total) * 100 : 0;
+    return `${slice.color} ${start}% ${cursor}%`;
+  });
+  const summary = slices.map((slice) => `${slice.label}: ${slice.value}`).join(', ');
+
+  return (
+    <section className="card chart-card" aria-labelledby="status-chart-heading">
+      <div>
+        <h2 id="status-chart-heading" className="text-lg font-semibold">Task status</h2>
+        <p className="text-sm text-gray-600">Current distribution across all tasks.</p>
+      </div>
+      {total === 0 ? <EmptyGraph message="Create tasks to see their status distribution." /> : (
+        <div className="status-chart-layout">
+          <div
+            className="status-donut"
+            role="img"
+            aria-label={`Task status chart. ${summary}`}
+            style={{ background: `conic-gradient(${stops.join(', ')})` }}
+          >
+            <div className="status-donut-center" aria-hidden="true">
+              <strong>{Math.round(stats.completion_rate)}%</strong>
+              <span>complete</span>
+            </div>
+          </div>
+          <ul className="chart-legend" aria-label="Task status values">
+            {slices.map((slice) => (
+              <li key={slice.label}>
+                <span className="chart-swatch" style={{ backgroundColor: slice.color }} aria-hidden="true" />
+                <span>{slice.label}</span>
+                <strong>{slice.value}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WeeklyWorkloadGraph({ weeks }: { weeks: DashboardWorkloadWeek[] }) {
+  const maximum = Math.max(1, ...weeks.map((week) => Math.max(week.total_hours, week.task_count)));
+
+  return (
+    <section className="card chart-card" aria-labelledby="weekly-chart-heading">
+      <div>
+        <h2 id="weekly-chart-heading" className="text-lg font-semibold">Upcoming workload</h2>
+        <p className="text-sm text-gray-600">Estimated hours due over the next four weeks.</p>
+      </div>
+      {weeks.length === 0 ? <EmptyGraph message="No active deadlines are scheduled in the next four weeks." /> : (
+        <div className="weekly-chart" role="img" aria-label={`Weekly workload chart with ${weeks.length} weeks`}>
+          {weeks.map((week) => {
+            const metric = Math.max(week.total_hours, week.task_count);
+            const height = Math.max(10, (metric / maximum) * 100);
+            return (
+              <div className="weekly-column" key={week.week_start}>
+                <div className="weekly-value">
+                  <strong>{week.total_hours.toFixed(1)}h</strong>
+                  <span>{week.task_count} {week.task_count === 1 ? 'task' : 'tasks'}</span>
+                </div>
+                <div className="weekly-track" aria-hidden="true">
+                  <div className="weekly-bar" style={{ height: `${height}%` }} />
+                </div>
+                <span className="weekly-label">{shortWeekLabel(week.week_start)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ModuleWorkloadGraph({ modules }: { modules: DashboardModuleSummary[] }) {
+  const visibleModules = modules.filter((module) => module.total_tasks > 0).slice(0, 6);
+  const maximum = Math.max(1, ...visibleModules.map((module) => module.total_tasks));
+
+  return (
+    <section className="card chart-card" aria-labelledby="module-chart-heading">
+      <div>
+        <h2 id="module-chart-heading" className="text-lg font-semibold">Tasks by module</h2>
+        <p className="text-sm text-gray-600">Active and completed work in your busiest modules.</p>
+      </div>
+      {visibleModules.length === 0 ? <EmptyGraph message="Add tasks to modules to compare their workload." /> : (
+        <ul className="module-chart" aria-label="Tasks by module">
+          {visibleModules.map((module) => {
+            const activeWidth = (module.active_tasks / maximum) * 100;
+            const completedWidth = (module.completed_tasks / maximum) * 100;
+            const color = safeColor(module.color);
+            return (
+              <li key={module.module_code}>
+                <div className="module-chart-label">
+                  <span className="truncate" title={module.module_name}>{module.module_code}</span>
+                  <span>{module.active_tasks} active ┬╖ {module.completed_tasks} done</span>
+                </div>
+                <div className="module-track" aria-hidden="true">
+                  <span className="module-active" style={{ width: `${activeWidth}%`, backgroundColor: color }} />
+                  <span className="module-completed" style={{ width: `${completedWidth}%`, backgroundColor: color }} />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 function friendlyDeadline(task: Task) {
   const deadline = new Date(task.deadline);
@@ -60,13 +214,8 @@ function Dashboard() {
     );
   }
 
-  const stats = data?.statistics || {
-    total_tasks: 0,
-    completed_tasks: 0,
-    in_progress_tasks: 0,
-    overdue_tasks: 0,
-    completion_rate: 0,
-  };
+  const stats = { ...emptyStats, ...(data?.statistics || {}) };
+
   const upcoming = data?.upcoming_tasks?.slice(0, 4) || [];
   const priorities = data?.high_priority_tasks?.slice(0, 3) || [];
   const firstName = (profile.display_name || profile.full_name || '').trim().split(' ')[0];
@@ -186,6 +335,12 @@ function Dashboard() {
           </section>
         </div>
       </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <TaskStatusGraph stats={stats} />
+        <WeeklyWorkloadGraph weeks={data?.workload_by_week || []} />
+      </div>
+      <ModuleWorkloadGraph modules={data?.tasks_by_module || []} />
     </div>
   );
 }

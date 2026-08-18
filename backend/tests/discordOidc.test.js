@@ -243,4 +243,40 @@ describe('Discord OIDC bridge', () => {
     expect(body(response)).toEqual({ sub: 'discord-user-id', email: 'student@example.com' });
     expect(mockSend.mock.calls[0][0].input.Key.id).toBe(hashedKey('access', 'access-token'));
   });
+
+  test.each([
+    ['malformed private-key base64', { DISCORD_OIDC_PRIVATE_KEY_BASE64: 'not-canonical-base64!' }],
+    ['non-RSA private key', {
+      DISCORD_OIDC_PRIVATE_KEY_BASE64: Buffer.from(generateKeyPairSync('ec', {
+        namedCurve: 'prime256v1',
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      }).privateKey).toString('base64'),
+    }],
+    ['weak RSA private key', {
+      DISCORD_OIDC_PRIVATE_KEY_BASE64: Buffer.from(generateKeyPairSync('rsa', {
+        modulusLength: 1024,
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+      }).privateKey).toString('base64'),
+    }],
+    ['mismatched frontend redirect', { DISCORD_OAUTH_REDIRECT_URI: 'https://other.example.com/account/settings' }],
+    ['untrusted Cognito redirect', { COGNITO_IDP_RESPONSE_URI: 'http://cognito.example.com/oauth2/idpresponse' }],
+  ])('fails closed for %s', async (_label, overrides) => {
+    const previous = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, overrides);
+    let isolatedBridge;
+    jest.isolateModules(() => {
+      isolatedBridge = require('../src/handlers/discordOidc');
+    });
+    Object.assign(process.env, previous);
+
+    const response = await isolatedBridge.handler(event('/oidc/discord/jwks.json'));
+    expect(response.statusCode).toBe(503);
+    expect(body(response)).toEqual({
+      error: 'temporarily_unavailable',
+      error_description: 'Discord authentication is not configured',
+    });
+  });
+
 });
