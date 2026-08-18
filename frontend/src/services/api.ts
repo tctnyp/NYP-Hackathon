@@ -105,6 +105,43 @@ export const dashboardApi = {
   get: () => apiClient.get<{ data: DashboardData }>('/dashboard'),
 };
 
+export interface TaskExtractionRequest {
+  file_name: string;
+  media_type: string;
+  document_base64: string;
+  locale: string;
+}
+
+export interface TaskExtractionSuggestion<T> {
+  value: T;
+  confidence: number;
+}
+
+export interface TaskExtractionFields {
+  title: TaskExtractionSuggestion<string> | null;
+  description: TaskExtractionSuggestion<string> | null;
+  task_type: TaskExtractionSuggestion<Task['task_type']> | null;
+  deadline_local: TaskExtractionSuggestion<string> | null;
+  estimated_hours: TaskExtractionSuggestion<number> | null;
+  grade_weight: TaskExtractionSuggestion<number> | null;
+  is_group_work: TaskExtractionSuggestion<boolean> | null;
+  module_hint: TaskExtractionSuggestion<string> | null;
+}
+
+export interface TaskExtractionData {
+  fields: TaskExtractionFields;
+  warnings: string[];
+  document: {
+    pages: number;
+  };
+}
+
+export const taskExtractionsApi = {
+  extract: (data: TaskExtractionRequest) => (
+    apiClient.post<{ data: TaskExtractionData }>('/task-extractions', data)
+  ),
+};
+
 export default apiClient;
 
 export interface AccountApiProfile {

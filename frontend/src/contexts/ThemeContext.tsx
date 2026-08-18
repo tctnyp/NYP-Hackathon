@@ -51,11 +51,14 @@ function storedBackground(): BackgroundPreference {
 
 function cssBackground(background: BackgroundPreference, resolvedTheme: ResolvedTheme) {
   if (background.kind === 'default') return 'var(--app-bg)';
+
+  // User-selected colors and images can have any luminance. A strong theme
+  // scrim keeps shell text readable while allowing the background through.
+  const overlay = resolvedTheme === 'dark' ? 'rgba(3, 7, 18, 0.78)' : 'rgba(248, 250, 252, 0.78)';
   if (background.kind === 'image') {
-    const overlay = resolvedTheme === 'dark' ? 'rgba(3, 7, 18, 0.58)' : 'rgba(248, 250, 252, 0.30)';
     return `linear-gradient(${overlay}, ${overlay}), url("${background.value}")`;
   }
-  return background.value;
+  return `linear-gradient(${overlay}, ${overlay}), ${background.value}`;
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

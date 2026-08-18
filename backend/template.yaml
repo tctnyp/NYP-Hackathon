@@ -14,7 +14,7 @@ Parameters:
     Description: The only Cognito username authorized for administrator access
   LabRoleArn:
     Type: String
-    Default: arn:aws:iam::081045266942:role/LabRole
+    Description: ARN of the externally managed Lambda execution role for this environment
   FrontendUrl:
     Type: String
     Default: https://nypxaws.tancheetiong.com
@@ -167,7 +167,6 @@ Globals:
         SCHOOLS_TABLE: !Ref SchoolsTable
         CLASSES_TABLE: !Ref ClassesTable
         ENROLLMENTS_TABLE: !Ref EnrollmentsTable
-        SNS_TOPIC_ARN: !Ref ReminderTopic
 
 Resources:
   # Cognito PostConfirmation trigger Lambda (created before UserPool to break circular dependency)
@@ -603,6 +602,22 @@ Resources:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: /tasks, Method: POST }
 
+  TaskExtractionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/taskExtraction.handler
+      MemorySize: 512
+      Timeout: 29
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /task-extractions
+            Method: POST
+            Auth: { Authorizer: CognitoAuthorizer }
+
   UpdateTaskFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -762,6 +777,10 @@ Resources:
     Properties:
       Role: !Ref LabRoleArn
       Handler: handlers/reminderCheckerLab.handler
+      Environment:
+        Variables:
+          REMINDER_FROM_EMAIL: !Ref CognitoFromEmail
+          APP_URL: !Ref FrontendUrl
       Events:
         ScheduledCheck:
           Type: Schedule

@@ -10,7 +10,9 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1110.0",
     "@aws-sdk/client-secrets-manager": "^3.1098.0",
+    "@aws-sdk/client-sesv2": "3.1098.0",
     "@aws-sdk/client-sns": "^3.1098.0",
+    "@aws-sdk/client-textract": "3.1098.0",
     "@aws-sdk/lib-dynamodb": "^3.1098.0"
   },
   "devDependencies": {
