@@ -35,7 +35,7 @@ function AuthCallback() {
         await cognitoAuth.handleOAuthCallback(code, state);
         // Update context from already stored token without refresh
         loadSessionFromStorage();
-        navigate('/dashboard', { replace: true });
+        navigate(cognitoAuth.consumeOAuthReturnTo(), { replace: true });
       } catch (err: any) {
         setError(err.message || 'Failed to complete authentication');
       }
@@ -53,7 +53,10 @@ function AuthCallback() {
             <h1 className="text-2xl font-bold text-gray-900 mb-4">Authentication Failed</h1>
             <p className="text-gray-600 mb-6">{error}</p>
             <button
-              onClick={() => navigate('/login')}
+              onClick={() => {
+                cognitoAuth.clearOAuthTransaction();
+                navigate('/login');
+              }}
               className="bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700"
             >
               Back to Sign In

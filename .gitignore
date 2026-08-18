@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 .build/
+frontend/amplify-deploy.zip
 
 # AWS
 .aws-sam/

@@ -1,8 +1,9 @@
-const { CognitoIdentityProviderClient, ListUsersCommand, AdminGetUserCommand, AdminEnableUserCommand, AdminDisableUserCommand, AdminAddUserToGroupCommand, AdminRemoveUserFromGroupCommand, AdminListGroupsForUserCommand, ListUsersInGroupCommand } = require('@aws-sdk/client-cognito-identity-provider');
+const { CognitoIdentityProviderClient, ListUsersCommand, AdminGetUserCommand, AdminEnableUserCommand, AdminDisableUserCommand, AdminListGroupsForUserCommand } = require('@aws-sdk/client-cognito-identity-provider');
 const { success, error, getUserId, getUsername, isAdmin, parseBody } = require('../utils/response');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION || 'us-east-1' });
 const USER_POOL_ID = process.env.USER_POOL_ID;
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 
 /**
  * GET /admin/users
@@ -75,7 +76,7 @@ exports.listUsers = async (event) => {
 
 /**
  * PATCH /admin/users/{username}
- * Enable/disable users or add/remove from Admins group (admin only)
+ * Enable or disable non-administrator users (admin only)
  */
 exports.manageUser = async (event) => {
   try {
@@ -97,37 +98,26 @@ exports.manageUser = async (event) => {
       return error('Invalid JSON body', 400);
     }
 
-    const { action, group } = body;
+    const { action } = body;
 
     if (!action) {
-      return error('action field required (enable, disable, addToGroup, removeFromGroup)', 400);
+      return error('action field required (enable or disable)', 400);
     }
 
-    // Validate admin cannot disable self
-    if (action === 'disable' && username === currentUsername) {
-      return error('Cannot disable your own account', 403);
+    if (action === 'addToGroup' || action === 'removeFromGroup') {
+      return error('Administrator membership is fixed and cannot be changed through the API', 403);
     }
 
-    // Validate admin cannot remove own Admins membership
-    if (action === 'removeFromGroup' && group === 'Admins' && username === currentUsername) {
-      return error('Cannot remove your own Admins membership', 403);
-    }
-
-    // If removing from Admins group, ensure at least one admin remains
-    if (action === 'removeFromGroup' && group === 'Admins') {
-      try {
-        const adminsCommand = new ListUsersInGroupCommand({
-          UserPoolId: USER_POOL_ID,
-          GroupName: 'Admins',
-        });
-        const adminsResponse = await cognitoClient.send(adminsCommand);
-        if (adminsResponse.Users && adminsResponse.Users.length <= 1) {
-          return error('Cannot remove the final admin. At least one admin must remain.', 403);
-        }
-      } catch (err) {
-        console.error('Failed to check admin count:', err.message);
-        return error('Could not verify that another admin would remain', 503);
-      }
+    // Cognito usernames are case-insensitive in this pool. Protect both the
+    // authenticated identity and the immutable sole-admin username regardless
+    // of the path parameter's casing.
+    const normalizedTarget = username.toLowerCase();
+    const normalizedCurrent = typeof currentUsername === 'string' ? currentUsername.toLowerCase() : '';
+    if (
+      action === 'disable'
+      && (normalizedTarget === normalizedCurrent || normalizedTarget === ADMIN_USERNAME.toLowerCase())
+    ) {
+      return error('Cannot disable the sole administrator account', 403);
     }
 
     let result = {};
@@ -149,38 +139,8 @@ exports.manageUser = async (event) => {
         result.message = `User ${username} disabled`;
         break;
 
-      case 'addToGroup':
-        if (!group) {
-          return error('group field required for addToGroup action', 400);
-        }
-        if (group !== 'Admins') {
-          return error('Only Admins group is currently supported', 400);
-        }
-        await cognitoClient.send(new AdminAddUserToGroupCommand({
-          UserPoolId: USER_POOL_ID,
-          Username: username,
-          GroupName: group,
-        }));
-        result.message = `User ${username} added to ${group} group`;
-        break;
-
-      case 'removeFromGroup':
-        if (!group) {
-          return error('group field required for removeFromGroup action', 400);
-        }
-        if (group !== 'Admins') {
-          return error('Only Admins group is currently supported', 400);
-        }
-        await cognitoClient.send(new AdminRemoveUserFromGroupCommand({
-          UserPoolId: USER_POOL_ID,
-          Username: username,
-          GroupName: group,
-        }));
-        result.message = `User ${username} removed from ${group} group`;
-        break;
-
       default:
-        return error('Invalid action. Must be: enable, disable, addToGroup, or removeFromGroup', 400);
+        return error('Invalid action. Must be: enable or disable', 400);
     }
 
     // Fetch updated user details with real groups

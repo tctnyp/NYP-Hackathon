@@ -19,6 +19,11 @@ function CalendarActions({ task, align = 'right' }: CalendarActionsProps) {
       </summary>
       <div className={`app-surface absolute z-20 mt-2 w-60 rounded-2xl border p-2 shadow-xl ${align === 'right' ? 'right-0' : 'left-0'}`}>
         <p className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Add to calendar</p>
+        <a className="calendar-action" href={googleCalendarUrl(task)} target="_blank" rel="noreferrer">
+          <CalendarPlus size={18} />
+          <span className="flex-1">Google Calendar <span className="ml-1 text-xs text-primary-600">Default</span></span>
+          <ExternalLink size={15} />
+        </a>
         <button
           type="button"
           onClick={() => void exportTaskToDeviceCalendar(task)}
@@ -28,11 +33,6 @@ function CalendarActions({ task, align = 'right' }: CalendarActionsProps) {
           <span className="flex-1 text-left">Phone calendar / .ics</span>
           <Download size={15} />
         </button>
-        <a className="calendar-action" href={googleCalendarUrl(task)} target="_blank" rel="noreferrer">
-          <CalendarPlus size={18} />
-          <span className="flex-1">Google Calendar</span>
-          <ExternalLink size={15} />
-        </a>
         <a className="calendar-action" href={outlookCalendarUrl(task)} target="_blank" rel="noreferrer">
           <CalendarPlus size={18} />
           <span className="flex-1">Microsoft Outlook</span>

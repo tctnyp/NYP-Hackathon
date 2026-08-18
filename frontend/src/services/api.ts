@@ -113,4 +113,67 @@ export const aiApi = {
   getBreakdown: (taskId: string) => apiClient.post(`/ai/breakdown/${taskId}`),
 };
 
+export interface AccountApiProfile {
+  display_name: string;
+  full_name: string;
+  profile_picture: string | null;
+  email?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountApiData {
+  profile: AccountApiProfile;
+  connections: Record<string, boolean | { connected: boolean; [key: string]: unknown }>;
+  password_change_available: boolean;
+  authorization_url?: string;
+  url?: string;
+}
+
+type AccountApiResponse = { data: AccountApiData };
+
+export const accountApi = {
+  get: () => apiClient.get<AccountApiResponse>('/account'),
+  updateProfile: (profile: Pick<AccountApiProfile, 'display_name' | 'full_name' | 'profile_picture'>) => (
+    apiClient.put<AccountApiResponse>('/account', profile)
+  ),
+  oauthAuthorize: (provider: 'google' | 'discord') => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'oauthAuthorize', provider })
+  ),
+  oauthCallback: (code: string, state: string) => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'oauthCallback', code, state })
+  ),
+  disconnect: (provider: 'google' | 'discord') => (
+    apiClient.put<AccountApiResponse>('/account', { action: 'disconnect', provider })
+  ),
+};
+
 export default apiClient;
+
+export interface GoogleCalendarSyncStatus {
+  linked: boolean;
+  available: boolean;
+  enabled: boolean;
+  status: 'disabled' | 'enabled' | 'disable_pending' | 'reauthorization_required' | string;
+  calendar_email?: string;
+  last_sync_at?: string;
+  last_attempt_at?: string;
+  last_error?: string | null;
+}
+
+type CalendarApiResponse = {
+  data: {
+    calendar_sync: GoogleCalendarSyncStatus;
+    authorization_url?: string;
+    expires_at?: string;
+  };
+};
+
+export const googleCalendarApi = {
+  get: () => apiClient.get<CalendarApiResponse>('/calendar/google'),
+  authorize: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'authorize' }),
+  callback: (code: string, state: string) => (
+    apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'callback', code, state })
+  ),
+  sync: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'sync' }),
+  disable: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'disable' }),
+};

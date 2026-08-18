@@ -8,12 +8,14 @@ Academic Tasks is a responsive academic workload manager for deadlines, assignme
 
 - Task creation, editing, filtering, progress tracking, and deadline management
 - Module organization and dashboard summaries
-- Calendar agenda with phone/ICS, Google Calendar, and Microsoft Outlook exports
+- Google Calendar as the default calendar action, with phone/ICS and Microsoft Outlook fallbacks
+- Explicit Google-linked Calendar auto-sync with encrypted server-side credentials and durable task updates
 - Installable Progressive Web App with offline app-shell support
 - Android-style bottom navigation and safe-area-aware mobile layout
 - Light, dark, and system themes
 - Solid colors, gradient presets, custom gradients, and local image backgrounds
-- Cognito authentication and administrator controls
+- Cognito authentication with Google and Discord federation
+- Account Settings for profile, appearance, password, and provider connections
 - Scheduled reminder processing
 - Experimental planning endpoints retained for evaluation on `dev`
 
@@ -35,7 +37,7 @@ database/                  Reference schemas and sample data
 - `dev` contains active and experimental work.
 - `main` contains the approved final production surface and excludes experimental planning endpoints.
 
-Operational installation, deployment, credentials, and hosting procedures are intentionally not published in this repository.
+Operational installation, deployment, credentials, and hosting procedures are intentionally not published in this repository. Provider secrets must remain in deployment parameters; see [`frontend/OAUTH_SETUP.md`](frontend/OAUTH_SETUP.md) for the non-secret Google and Discord Cognito configuration contract.
 
 ## More information
 

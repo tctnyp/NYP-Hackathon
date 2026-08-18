@@ -1,57 +1,704 @@
-const { getItem, putItem, USERS_TABLE, timestamp } = require('../utils/database');
-const { success, error, getUserId, getUserEmail, getUserName, parseBody } = require('../utils/response');
+const { createHash, randomBytes } = require('node:crypto');
+const {
+  AdminDisableProviderForUserCommand,
+  AdminLinkProviderForUserCommand,
+  CognitoIdentityProviderClient,
+} = require('@aws-sdk/client-cognito-identity-provider');
+const { DeleteCommand, GetCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const {
+  docClient,
+  getItem,
+  putItem,
+  updateItem,
+  USERS_TABLE,
+  timestamp,
+} = require('../utils/database');
+const {
+  success,
+  error,
+  getClaims,
+  getUserId,
+  getUserEmail,
+  getUserName,
+  parseBody,
+} = require('../utils/response');
 
-exports.getProfile = async (event) => {
+const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION || 'us-east-1' });
+const USER_POOL_ID = process.env.USER_POOL_ID;
+const CALENDAR_CONNECTIONS_TABLE = process.env.CALENDAR_CONNECTIONS_TABLE;
+const OAUTH_STATE_TTL_SECONDS = 10 * 60;
+const SENSITIVE_AUTH_MAX_AGE_SECONDS = 10 * 60;
+const MAX_PROFILE_PICTURE_LENGTH = 200 * 1024;
+const PROVIDERS = new Set(['discord', 'google']);
+const INTERNAL_FIELDS = new Set([
+  'oauth_state_discord',
+  'oauth_state_google',
+  'oauth_connection_discord',
+  'oauth_connection_google',
+]);
+
+class ProviderError extends Error {}
+
+function hasRecentAuthentication(event) {
+  const authTime = Number(getClaims(event).auth_time);
+  if (!Number.isFinite(authTime) || authTime <= 0) return false;
+  const age = Math.floor(Date.now() / 1000) - authTime;
+  return age >= -60 && age <= SENSITIVE_AUTH_MAX_AGE_SECONDS;
+}
+
+function recentAuthenticationError() {
+  return error('Sign in again before changing connected accounts', 403);
+}
+
+function normalizeProvider(provider) {
+  if (typeof provider !== 'string') return null;
+  const normalized = provider.trim().toLowerCase();
+  return PROVIDERS.has(normalized) ? normalized : null;
+}
+
+function stateField(provider) {
+  return `oauth_state_${provider}`;
+}
+
+function connectionField(provider) {
+  return `oauth_connection_${provider}`;
+}
+
+function stateHash(userId, state) {
+  return createHash('sha256').update(`${userId}\0${state}`, 'utf8').digest('hex');
+}
+
+function parseIdentities(event) {
+  const raw = getClaims(event).identities;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function providerIdentity(event, providerName) {
+  return parseIdentities(event).find((identity) => (
+    identity
+    && typeof identity.providerName === 'string'
+    && identity.providerName.toLowerCase() === providerName.toLowerCase()
+  )) || null;
+}
+
+function googleIdentity(event) {
+  return providerIdentity(event, 'Google');
+}
+
+function discordIdentity(event) {
+  return providerIdentity(event, 'Discord');
+}
+
+function isProviderOrigin(event, provider) {
+  const username = getClaims(event)['cognito:username'];
+  return typeof username === 'string' && username.toLowerCase().startsWith(`${provider.toLowerCase()}_`);
+}
+
+function isGoogleOrigin(event) {
+  return isProviderOrigin(event, 'google');
+}
+
+function isDiscordOrigin(event) {
+  return isProviderOrigin(event, 'discord');
+}
+
+function cognitoDestinationUser(event) {
+  let providerAttributeValue = getClaims(event)['cognito:username'];
+  if (isGoogleOrigin(event)) providerAttributeValue = googleIdentity(event)?.userId;
+  if (isDiscordOrigin(event)) providerAttributeValue = discordIdentity(event)?.userId;
+  if (typeof providerAttributeValue !== 'string' || !providerAttributeValue) {
+    throw new Error('Cognito account linking destination is unavailable');
+  }
+  return {
+    ProviderName: 'Cognito',
+    ProviderAttributeValue: providerAttributeValue,
+  };
+}
+
+function publicProfile(profile, event) {
+  if (!profile) return null;
+
+  const result = { ...profile };
+  for (const field of INTERNAL_FIELDS) delete result[field];
+
+  const claimEmail = getUserEmail(event);
+  const claimName = getUserName(event);
+  if (claimEmail) result.email = claimEmail;
+  if (!result.full_name && claimName) result.full_name = claimName;
+  if (!result.display_name) {
+    result.display_name = result.full_name || claimName || claimEmail?.split('@')[0] || 'User';
+  }
+  if (!result.profile_picture) result.profile_picture = null;
+  return result;
+}
+
+function publicConnection(connection, fallback = {}) {
+  if (!connection) return { connected: false };
+
+  return {
+    connected: true,
+    ...(connection.display_name ? { display_name: connection.display_name } : {}),
+    ...(connection.username ? { username: connection.username } : {}),
+    ...(connection.email ? { email: connection.email } : {}),
+    ...(connection.connected_at ? { connected_at: connection.connected_at } : {}),
+    ...fallback,
+  };
+}
+
+function isProviderConfigured(provider) {
+  const config = providerConfig(provider);
+  return Boolean(config.clientId && config.clientSecret && config.redirectUri);
+}
+
+function accountData(event, profile) {
+  const claimGoogleIdentity = googleIdentity(event);
+  const googleOrigin = isGoogleOrigin(event);
+  const claimGoogleConnected = Boolean(claimGoogleIdentity) || googleOrigin;
+  const storedGoogle = profile?.oauth_connection_google;
+  const claimGoogleFallback = claimGoogleConnected ? {
+    ...(getUserEmail(event) ? { email: getUserEmail(event) } : {}),
+    ...(getUserName(event) ? { display_name: getUserName(event) } : {}),
+  } : {};
+  const google = storedGoogle
+    ? publicConnection(storedGoogle)
+    : (claimGoogleConnected ? publicConnection({ connected_at: null }, claimGoogleFallback) : { connected: false });
+
+  const claimDiscordIdentity = discordIdentity(event);
+  const discordOrigin = isDiscordOrigin(event);
+  const claimDiscordConnected = Boolean(claimDiscordIdentity) || discordOrigin;
+  const storedDiscord = profile?.oauth_connection_discord;
+  const claimDiscordFallback = claimDiscordConnected ? {
+    ...(getUserEmail(event) ? { email: getUserEmail(event) } : {}),
+    ...(getUserName(event) ? { display_name: getUserName(event) } : {}),
+  } : {};
+  const discord = storedDiscord
+    ? publicConnection(storedDiscord)
+    : (claimDiscordConnected ? publicConnection({ connected_at: null }, claimDiscordFallback) : { connected: false });
+
+  return {
+    profile: publicProfile(profile, event),
+    connections: {
+      google: {
+        ...google,
+        available: isProviderConfigured('google'),
+        disconnect_allowed: google.connected && !googleOrigin,
+      },
+      discord: {
+        ...discord,
+        available: isProviderConfigured('discord'),
+        disconnect_allowed: discord.connected && !discordOrigin,
+      },
+    },
+    password_change_available: !googleOrigin && !discordOrigin,
+  };
+}
+
+function baseProfile(event, existing = null) {
+  const now = timestamp();
+  const email = getUserEmail(event);
+  const tokenName = getUserName(event);
+  return {
+    ...(existing || {}),
+    user_id: getUserId(event),
+    email,
+    display_name: existing?.display_name || tokenName || email?.split('@')[0] || 'User',
+    full_name: existing?.full_name || tokenName || 'User',
+    profile_picture: existing?.profile_picture || null,
+    organization_id: existing?.organization_id ?? null,
+    school_id: existing?.school_id ?? null,
+    class_id: existing?.class_id ?? null,
+    preferences: existing?.preferences ?? {},
+    auth_provider: existing?.auth_provider || (parseIdentities(event).length ? 'federated' : 'cognito'),
+    created_at: existing?.created_at || now,
+    updated_at: now,
+  };
+}
+
+async function ensureProfile(event) {
   const userId = getUserId(event);
-  if (!userId) return error('Unauthorized', 401);
+  const existing = await getItem(USERS_TABLE, { user_id: userId });
+  if (existing) return existing;
 
-  const profile = await getItem(USERS_TABLE, { user_id: userId });
+  const profile = baseProfile(event);
+  await putItem(USERS_TABLE, profile);
+  return profile;
+}
 
-  // Enrich profile with current token claims if profile exists
-  if (profile) {
-    const email = getUserEmail(event);
-    const name = getUserName(event);
-    if (email) profile.email = email;
-    if (name && !profile.full_name) profile.full_name = name;
+function validateTextField(value, field, maxLength) {
+  if (typeof value !== 'string') return `${field} must be a string`;
+  const trimmed = value.trim();
+  if (!trimmed) return `${field} cannot be empty`;
+  if (trimmed.length > maxLength) return `${field} must be ${maxLength} characters or fewer`;
+  return null;
+}
+
+function isValidImageSignature(mimeType, bytes) {
+  if (mimeType === 'png') {
+    return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+  if (mimeType === 'jpeg') {
+    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (mimeType === 'webp') {
+    return bytes.length >= 12
+      && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+      && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  }
+  return false;
+}
+
+function validateProfilePicture(value) {
+  if (value === null) return null;
+  if (typeof value !== 'string') return 'profile_picture must be a data URL or null';
+  if (value.length > MAX_PROFILE_PICTURE_LENGTH) {
+    return 'profile_picture must be 200KB or smaller';
   }
 
-  return success({ profile: profile || null });
+  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) return 'profile_picture must be a base64 png, jpeg, or webp data URL';
+
+  const payload = match[2];
+  if (payload.length % 4 !== 0) return 'profile_picture contains invalid base64 data';
+  const bytes = Buffer.from(payload, 'base64');
+  if (!bytes.length || bytes.toString('base64') !== payload) {
+    return 'profile_picture contains invalid base64 data';
+  }
+  if (!isValidImageSignature(match[1], bytes)) {
+    return 'profile_picture content does not match its image type';
+  }
+  return null;
+}
+
+function validateProfileUpdate(body) {
+  const allowed = new Set(['display_name', 'full_name', 'profile_picture']);
+  const fields = Object.keys(body);
+  const unsupported = fields.filter((field) => !allowed.has(field));
+  if (unsupported.length) return `Unsupported profile field: ${unsupported[0]}`;
+  if (!fields.length) return 'At least one profile field is required';
+
+  if (Object.hasOwn(body, 'display_name')) {
+    const validationError = validateTextField(body.display_name, 'display_name', 80);
+    if (validationError) return validationError;
+  }
+  if (Object.hasOwn(body, 'full_name')) {
+    const validationError = validateTextField(body.full_name, 'full_name', 200);
+    if (validationError) return validationError;
+  }
+  if (Object.hasOwn(body, 'profile_picture')) {
+    return validateProfilePicture(body.profile_picture);
+  }
+  return null;
+}
+
+function providerConfig(provider) {
+  if (provider === 'discord') {
+    return {
+      clientId: process.env.DISCORD_OAUTH_CLIENT_ID,
+      clientSecret: process.env.DISCORD_OAUTH_CLIENT_SECRET,
+      redirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
+    };
+  }
+  return {
+    clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI,
+  };
+}
+
+function authorizationUrl(provider, config, state) {
+  if (provider === 'discord') {
+    const url = new URL('https://discord.com/oauth2/authorize');
+    url.search = new URLSearchParams({
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri,
+      response_type: 'code',
+      scope: 'identify email',
+      state,
+      prompt: 'consent',
+    }).toString();
+    return url.toString();
+  }
+
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.search = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    prompt: 'consent select_account',
+  }).toString();
+  return url.toString();
+}
+
+async function fetchJson(url, options) {
+  let response;
+  try {
+    response = await fetch(url, { ...options, signal: AbortSignal.timeout(10000) });
+  } catch {
+    throw new ProviderError('The connection provider could not be reached');
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new ProviderError('The connection provider returned an invalid response');
+  }
+  if (!response.ok) throw new ProviderError('The connection provider rejected the request');
+  return data;
+}
+
+async function exchangeDiscordCode(event, code, config) {
+  const token = await fetchJson('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: config.redirectUri,
+    }),
+  });
+  if (typeof token.access_token !== 'string') throw new ProviderError('Discord did not return an access token');
+
+  const user = await fetchJson('https://discord.com/api/v10/users/@me', {
+    headers: { Authorization: `Bearer ${token.access_token}` },
+  });
+  if (typeof user.id !== 'string' || typeof user.username !== 'string') {
+    throw new ProviderError('Discord did not return a valid user profile');
+  }
+
+  let cognitoLinked = false;
+  if (!isDiscordOrigin(event)) {
+    if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+    await cognitoClient.send(new AdminLinkProviderForUserCommand({
+      UserPoolId: USER_POOL_ID,
+      DestinationUser: cognitoDestinationUser(event),
+      SourceUser: {
+        ProviderName: 'Discord',
+        ProviderAttributeName: 'Cognito_Subject',
+        ProviderAttributeValue: user.id,
+      },
+    }));
+    cognitoLinked = true;
+  }
+
+  return {
+    provider_user_id: user.id,
+    username: user.username,
+    display_name: typeof user.global_name === 'string' ? user.global_name : user.username,
+    ...(typeof user.email === 'string' ? { email: user.email } : {}),
+    cognito_linked: cognitoLinked,
+    connected_at: timestamp(),
+  };
+}
+
+async function exchangeGoogleCode(event, code, config) {
+  const token = await fetchJson('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: config.redirectUri,
+    }),
+  });
+  if (typeof token.access_token !== 'string') throw new ProviderError('Google did not return an access token');
+
+  const user = await fetchJson('https://openidconnect.googleapis.com/v1/userinfo', {
+    headers: { Authorization: `Bearer ${token.access_token}` },
+  });
+  const currentEmail = getUserEmail(event);
+  if (typeof user.sub !== 'string' || typeof user.email !== 'string' || user.email_verified !== true) {
+    throw new ProviderError('Google did not return a verified user profile');
+  }
+  if (!currentEmail || user.email.toLowerCase() !== currentEmail.toLowerCase()) {
+    throw new ProviderError('The Google account email must match the signed-in account');
+  }
+
+  if (!isGoogleOrigin(event)) {
+    if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+    await cognitoClient.send(new AdminLinkProviderForUserCommand({
+      UserPoolId: USER_POOL_ID,
+      DestinationUser: cognitoDestinationUser(event),
+      SourceUser: {
+        ProviderName: 'Google',
+        ProviderAttributeName: 'Cognito_Subject',
+        ProviderAttributeValue: user.sub,
+      },
+    }));
+  }
+
+  return {
+    provider_user_id: user.sub,
+    email: user.email,
+    ...(typeof user.name === 'string' ? { display_name: user.name } : {}),
+    link_version: randomBytes(16).toString('base64url'),
+    status: 'active',
+    connected_at: timestamp(),
+  };
+}
+
+async function consumeState(userId, provider, state) {
+  const expectedHash = stateHash(userId, state);
+
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: USERS_TABLE,
+      Key: { user_id: userId },
+      UpdateExpression: 'REMOVE #oauth_state SET #updated_at = :updated_at',
+      ConditionExpression: '#oauth_state.#state_hash = :state_hash AND #oauth_state.#expires_at >= :now',
+      ExpressionAttributeNames: {
+        '#oauth_state': stateField(provider),
+        '#state_hash': 'state_hash',
+        '#expires_at': 'expires_at',
+        '#updated_at': 'updated_at',
+      },
+      ExpressionAttributeValues: {
+        ':state_hash': expectedHash,
+        ':now': Math.floor(Date.now() / 1000),
+        ':updated_at': timestamp(),
+      },
+    }));
+    return true;
+  } catch (err) {
+    if (err.name === 'ConditionalCheckFailedException') return false;
+    throw err;
+  }
+}
+
+async function saveConnection(userId, provider, connection) {
+  return updateItem(USERS_TABLE, { user_id: userId }, {
+    [connectionField(provider)]: connection,
+    updated_at: timestamp(),
+  });
+}
+
+async function removeConnection(userId, provider) {
+  const response = await docClient.send(new UpdateCommand({
+    TableName: USERS_TABLE,
+    Key: { user_id: userId },
+    UpdateExpression: 'REMOVE #connection SET #updated_at = :updated_at',
+    ExpressionAttributeNames: {
+      '#connection': connectionField(provider),
+      '#updated_at': 'updated_at',
+    },
+    ExpressionAttributeValues: { ':updated_at': timestamp() },
+    ReturnValues: 'ALL_NEW',
+  }));
+  return response.Attributes;
+}
+
+async function oauthAuthorize(event, body, profile) {
+  const provider = normalizeProvider(body.provider);
+  if (!provider) return error('provider must be discord or google', 400);
+  if (!hasRecentAuthentication(event)) return recentAuthenticationError();
+
+  const config = providerConfig(provider);
+  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    return error(`${provider} connection is not configured`, 503);
+  }
+
+  const userId = getUserId(event);
+  const state = `${provider}.${randomBytes(32).toString('base64url')}`;
+  const expiresAt = Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS;
+  await updateItem(USERS_TABLE, { user_id: userId }, {
+    [stateField(provider)]: {
+      state_hash: stateHash(userId, state),
+      expires_at: expiresAt,
+    },
+    updated_at: timestamp(),
+  });
+
+  return success({
+    ...accountData(event, profile),
+    provider,
+    authorization_url: authorizationUrl(provider, config, state),
+    expires_at: new Date(expiresAt * 1000).toISOString(),
+  });
+}
+
+async function oauthCallback(event, body) {
+  if (!hasRecentAuthentication(event)) return recentAuthenticationError();
+  if (typeof body.code !== 'string' || !body.code.trim() || body.code.length > 4096) {
+    return error('A valid OAuth code is required', 400);
+  }
+  if (typeof body.state !== 'string' || body.state.length > 512) {
+    return error('A valid OAuth state is required', 400);
+  }
+
+  const separator = body.state.indexOf('.');
+  const provider = normalizeProvider(separator > 0 ? body.state.slice(0, separator) : null);
+  if (!provider) return error('Invalid or expired OAuth state', 400);
+
+  const userId = getUserId(event);
+  if (!await consumeState(userId, provider, body.state)) {
+    return error('Invalid or expired OAuth state', 400);
+  }
+
+  const config = providerConfig(provider);
+  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    return error(`${provider} connection is not configured`, 503);
+  }
+
+  const connection = provider === 'discord'
+    ? await exchangeDiscordCode(event, body.code.trim(), config)
+    : await exchangeGoogleCode(event, body.code.trim(), config);
+  const profile = await saveConnection(userId, provider, connection);
+  return success(accountData(event, profile));
+}
+
+async function disconnect(event, body, profile) {
+  const provider = normalizeProvider(body.provider);
+  if (!provider) return error('provider must be discord or google', 400);
+  if (!hasRecentAuthentication(event)) return recentAuthenticationError();
+
+  if (provider === 'google') {
+    if (isGoogleOrigin(event)) {
+      return error('The primary Google sign-in cannot be disconnected', 409);
+    }
+
+    if (CALENDAR_CONNECTIONS_TABLE) {
+      const calendarResponse = await docClient.send(new GetCommand({
+        TableName: CALENDAR_CONNECTIONS_TABLE,
+        Key: { user_id: getUserId(event) },
+      }));
+      const calendarConnection = calendarResponse.Item;
+      if (calendarConnection?.encrypted_refresh_token || ['enabled', 'disable_pending', 'cleanup_reauthorization_required'].includes(calendarConnection?.status)) {
+        return error('Disable Google Calendar synchronization before disconnecting Google', 409);
+      }
+      if (calendarConnection) {
+        await docClient.send(new DeleteCommand({
+          TableName: CALENDAR_CONNECTIONS_TABLE,
+          Key: { user_id: getUserId(event) },
+        }));
+      }
+    }
+
+    const googleConnection = profile?.oauth_connection_google;
+    const providerUserId = googleConnection?.provider_user_id || googleIdentity(event)?.userId;
+    if (providerUserId) {
+      if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+      if (googleConnection) {
+        await updateItem(USERS_TABLE, { user_id: getUserId(event) }, {
+          oauth_connection_google: { ...googleConnection, status: 'unlinking' },
+          updated_at: timestamp(),
+        });
+      }
+      try {
+        await cognitoClient.send(new AdminDisableProviderForUserCommand({
+          UserPoolId: USER_POOL_ID,
+          User: {
+            ProviderName: 'Google',
+            ProviderAttributeName: 'Cognito_Subject',
+            ProviderAttributeValue: providerUserId,
+          },
+        }));
+      } catch (unlinkError) {
+        if (googleConnection) {
+          await updateItem(USERS_TABLE, { user_id: getUserId(event) }, {
+            oauth_connection_google: { ...googleConnection, status: 'active' },
+            updated_at: timestamp(),
+          });
+        }
+        throw unlinkError;
+      }
+    }
+  }
+
+  if (provider === 'discord') {
+    if (isDiscordOrigin(event)) {
+      return error('The primary Discord sign-in cannot be disconnected', 409);
+    }
+
+    const connection = profile?.oauth_connection_discord;
+    const providerUserId = connection?.provider_user_id || discordIdentity(event)?.userId;
+    if (providerUserId && connection?.cognito_linked === true) {
+      if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
+      await cognitoClient.send(new AdminDisableProviderForUserCommand({
+        UserPoolId: USER_POOL_ID,
+        User: {
+          ProviderName: 'Discord',
+          ProviderAttributeName: 'Cognito_Subject',
+          ProviderAttributeValue: providerUserId,
+        },
+      }));
+    }
+  }
+
+  const updatedProfile = await removeConnection(getUserId(event), provider);
+  return success(accountData(event, updatedProfile));
+}
+
+exports.getProfile = async (event) => {
+  try {
+    const userId = getUserId(event);
+    if (!userId) return error('Unauthorized', 401);
+
+    const profile = await getItem(USERS_TABLE, { user_id: userId });
+    return success(accountData(event, profile));
+  } catch (err) {
+    console.error('Account retrieval failed:', err.message);
+    return error('Failed to retrieve account', 500);
+  }
 };
 
 exports.upsertProfile = async (event) => {
   try {
     const userId = getUserId(event);
     if (!userId) return error('Unauthorized', 401);
-
-    const email = getUserEmail(event);
-    const tokenName = getUserName(event);
-
-    if (!email) return error('Email claim missing from token', 400);
+    if (!getUserEmail(event)) return error('Email claim missing from token', 400);
 
     const body = parseBody(event);
-    if (!body) return error('Invalid JSON body', 400);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return error('Invalid JSON body', 400);
+    }
 
-    const existing = await getItem(USERS_TABLE, { user_id: userId });
+    const profile = await ensureProfile(event);
+    if (Object.hasOwn(body, 'action')) {
+      switch (body.action) {
+        case 'oauthAuthorize':
+          return await oauthAuthorize(event, body, profile);
+        case 'oauthCallback':
+          return await oauthCallback(event, body);
+        case 'disconnect':
+          return await disconnect(event, body, profile);
+        default:
+          return error('Invalid action', 400);
+      }
+    }
+
+    const validationError = validateProfileUpdate(body);
+    if (validationError) return error(validationError, 400);
+
     const now = timestamp();
-
-    const profile = {
-      ...(existing || {}),
-      user_id: userId,
-      email: email,
-      full_name: body.full_name || existing?.full_name || tokenName || 'User',
-      organization_id: body.organization_id ?? existing?.organization_id ?? null,
-      school_id: body.school_id ?? existing?.school_id ?? null,
-      class_id: body.class_id ?? existing?.class_id ?? null,
-      preferences: body.preferences ?? existing?.preferences ?? {},
-      auth_provider: existing?.auth_provider || 'cognito',
-      created_at: existing?.created_at || now,
+    const updatedProfile = {
+      ...baseProfile(event, profile),
+      ...(Object.hasOwn(body, 'display_name') ? { display_name: body.display_name.trim() } : {}),
+      ...(Object.hasOwn(body, 'full_name') ? { full_name: body.full_name.trim() } : {}),
+      ...(Object.hasOwn(body, 'profile_picture') ? { profile_picture: body.profile_picture } : {}),
       updated_at: now,
     };
-
-    await putItem(USERS_TABLE, profile);
-    return success({ profile }, existing ? 200 : 201);
+    await putItem(USERS_TABLE, updatedProfile);
+    return success(accountData(event, updatedProfile));
   } catch (err) {
-    console.error('Profile update failed:', err);
-    return error('Failed to update profile', 500);
+    console.error('Account update failed:', err.message);
+    if (err instanceof ProviderError) return error(err.message, 400);
+    if (['AliasExistsException', 'InvalidParameterException', 'ResourceConflictException'].includes(err.name)) {
+      return error('The Google account is already linked or cannot be linked', 409);
+    }
+    return error('Failed to update account', 500);
   }
 };

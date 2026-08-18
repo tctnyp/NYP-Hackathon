@@ -5,6 +5,7 @@ import apiClient from '../services/api';
 interface AdminUser {
   username: string;
   email: string;
+  name?: string;
   enabled: boolean;
   status: string;
   groups: string[];
@@ -62,15 +63,6 @@ function AdminPanel() {
     await updateUser(username, currentEnabled ? 'disable' : 'enable');
   };
 
-  const toggleAdminRole = async (username: string, currentGroups: string[]) => {
-    const isAdmin = currentGroups.includes('Admins');
-    if (isAdmin) {
-      await updateUser(username, 'removeFromGroup', 'Admins');
-    } else {
-      await updateUser(username, 'addToGroup', 'Admins');
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -91,7 +83,7 @@ function AdminPanel() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
-            <p className="text-gray-600">Manage users and permissions</p>
+            <p className="text-gray-600">Manage user access</p>
           </div>
         </div>
         <button
@@ -141,7 +133,9 @@ function AdminPanel() {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {users.map((user) => {
-                const isAdmin = (user.groups || []).includes('Admins');
+                const isAdmin = user.username === 'admin' && (user.groups || []).includes('Admins');
+                const isProtectedAdmin = user.username === 'admin';
+                const displayName = user.name || user.email?.split('@')[0] || user.username;
                 const isUpdating = updating === user.username;
 
                 return (
@@ -152,7 +146,7 @@ function AdminPanel() {
                           <User className="text-primary-600" size={20} />
                         </div>
                         <div>
-                          <p className="font-medium text-gray-900">{user.username}</p>
+                          <p className="font-medium text-gray-900">{displayName}</p>
                           <p className="text-sm text-gray-500">{user.email}</p>
                         </div>
                       </div>
@@ -186,25 +180,15 @@ function AdminPanel() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => toggleUserEnabled(user.username, user.enabled)}
-                          disabled={isUpdating}
+                          disabled={isUpdating || isProtectedAdmin}
                           className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${
                             user.enabled
                               ? 'bg-red-50 text-red-700 hover:bg-red-100'
                               : 'bg-green-50 text-green-700 hover:bg-green-100'
                           }`}
+                          title={isProtectedAdmin ? 'The sole administrator account is protected' : undefined}
                         >
-                          {user.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                        <button
-                          onClick={() => toggleAdminRole(user.username, user.groups || [])}
-                          disabled={isUpdating}
-                          className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${
-                            isAdmin
-                              ? 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                              : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
-                          }`}
-                        >
-                          {isAdmin ? 'Remove Admin' : 'Make Admin'}
+                          {isProtectedAdmin ? 'Protected' : user.enabled ? 'Disable' : 'Enable'}
                         </button>
                       </div>
                     </td>
