@@ -438,6 +438,8 @@ describe('account handler', () => {
     const response = await account.upsertProfile(event({ action: 'disconnect', provider: 'google' }));
     expect(response.statusCode).toBe(200);
     expect(mockCognitoSend).not.toHaveBeenCalled();
+  });
+
   test('does not mark a recovered missing profile as a first signup', async () => {
     mockGetItem.mockResolvedValueOnce(undefined);
     const response = await account.upsertProfile(event({ display_name: 'Recovered student' }));

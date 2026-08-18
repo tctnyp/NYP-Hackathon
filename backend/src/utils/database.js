@@ -137,7 +137,8 @@ async function batchWriteTable(tableName, requests) {
       const response = await docClient.send(new BatchWriteCommand({ RequestItems: { [tableName]: pending } }));
       pending = response.UnprocessedItems?.[tableName] || [];
     } while (pending.length > 0);
-  }}
+  }
+}
 
 async function batchWrite(items) {
   return batchWriteTable(TASKS_TABLE, items);
