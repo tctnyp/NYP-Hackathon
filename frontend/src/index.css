@@ -578,3 +578,119 @@ body,
 [data-theme='dark'] .text-orange-700 { color: #fdba74; }
 [data-theme='dark'] .text-amber-600,
 [data-theme='dark'] .text-orange-600 { color: #fbbf24; }
+
+
+/* Module focus timer */
+.focus-studio {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 1.5rem;
+  background: var(--app-surface);
+  box-shadow: 0 18px 55px rgba(23, 32, 51, 0.08);
+  scroll-margin-top: 6rem;
+}
+
+.focus-main { padding: 1.25rem; }
+.focus-summary { border-top: 1px solid var(--app-border); background: color-mix(in srgb, var(--app-bg) 58%, var(--app-surface)); padding: 1.25rem; }
+.focus-status { display: inline-flex; align-items: center; gap: .45rem; border-radius: 999px; padding: .38rem .7rem; font-size: .7rem; font-weight: 700; letter-spacing: .02em; }
+.focus-status > span { width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
+.focus-status-idle { background: #f1f5f9; color: #64748b; }
+.focus-status-running { background: #dcfce7; color: #15803d; }
+.focus-status-running > span { animation: focus-pulse 1.5s ease-in-out infinite; }
+.focus-status-paused { background: #fef3c7; color: #b45309; }
+
+.focus-module-select {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--app-border);
+  border-radius: .85rem;
+  background: var(--app-surface-raised);
+  color: var(--app-text);
+  padding: .65rem 2.5rem .65rem .85rem;
+  font-size: .9rem;
+  font-weight: 600;
+  outline: none;
+}
+.focus-module-select:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.focus-module-select:disabled { cursor: not-allowed; opacity: .72; }
+
+.focus-clock-wrap { position: relative; display: flex; justify-content: center; padding: 2rem 0 1.5rem; }
+.focus-clock-wrap::before { content: ''; position: absolute; top: 50%; left: 50%; width: 16rem; height: 16rem; transform: translate(-50%, -50%); border-radius: 50%; background: color-mix(in srgb, var(--module-color) 9%, transparent); filter: blur(2px); }
+.focus-studio-running .focus-clock-wrap::before { animation: focus-breathe 3s ease-in-out infinite; }
+.focus-clock { position: relative; z-index: 1; display: flex; min-height: 13rem; width: min(100%, 24rem); flex-direction: column; align-items: center; justify-content: center; border: 1px solid color-mix(in srgb, var(--module-color) 24%, var(--app-border)); border-radius: 50%; background: var(--app-surface-raised); box-shadow: 0 20px 50px color-mix(in srgb, var(--module-color) 12%, transparent), inset 0 0 0 7px color-mix(in srgb, var(--module-color) 4%, transparent); aspect-ratio: 1.8 / 1; }
+.focus-clock-label { margin-bottom: .55rem; color: var(--module-color); font-size: .7rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.focus-time { font-variant-numeric: tabular-nums; color: var(--app-text); font-size: clamp(2.45rem, 10vw, 4.5rem); font-weight: 650; letter-spacing: -.055em; line-height: 1; }
+.focus-clock-caption { margin-top: .7rem; color: var(--app-muted); font-size: .65rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.focus-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .65rem; }
+.focus-control-primary, .focus-control-finish { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: .55rem; border-radius: .9rem; padding: .65rem 1.2rem; font-size: .88rem; font-weight: 700; transition: transform 150ms ease, filter 150ms ease; }
+.focus-control-primary { min-width: 9.5rem; background: #2563eb; color: #fff; box-shadow: 0 7px 18px rgba(37,99,235,.22); }
+.focus-control-primary:hover { background: #1d4ed8; }
+.focus-control-finish { border: 1px solid var(--app-border); background: var(--app-surface-raised); color: var(--app-text); }
+.focus-control-primary:active, .focus-control-finish:active { transform: scale(.97); }
+
+.focus-total { display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid var(--app-border); padding-bottom: 1.25rem; }
+.focus-total-icon { display: flex; height: 2.8rem; width: 2.8rem; flex-shrink: 0; align-items: center; justify-content: center; border-radius: .9rem; background: #dbeafe; color: #2563eb; }
+.focus-total p { color: var(--app-muted); font-size: .72rem; font-weight: 650; }
+.focus-total strong { display: block; margin-top: .1rem; font-size: 1.65rem; font-weight: 650; letter-spacing: -.035em; }
+.focus-total span { color: var(--app-muted); font-size: .7rem; }
+.focus-module-stat { display: flex; align-items: center; gap: .7rem; margin-top: 1.25rem; border: 1px solid var(--app-border); border-radius: 1rem; background: var(--app-surface); padding: .8rem; }
+.focus-module-stat p { font-size: .8rem; }
+.focus-module-stat span { color: var(--app-muted); font-size: .65rem; }
+.focus-module-stat strong { font-size: .82rem; }
+.focus-history-empty { display: flex; min-height: 6rem; flex-direction: column; align-items: center; justify-content: center; gap: .45rem; border: 1px dashed var(--app-border); border-radius: 1rem; color: var(--app-muted); text-align: center; }
+.focus-history-empty p { font-size: .75rem; }
+.focus-session-row { display: flex; align-items: center; gap: .65rem; border-radius: .9rem; background: var(--app-surface); padding: .65rem .7rem; }
+.focus-session-check { display: flex; height: 1.65rem; width: 1.65rem; flex-shrink: 0; align-items: center; justify-content: center; border-radius: .55rem; background: color-mix(in srgb, currentColor 10%, transparent); }
+.focus-session-row p { font-size: .76rem; font-weight: 700; }
+.focus-session-row span { color: var(--app-muted); font-size: .62rem; }
+.focus-session-row strong { font-size: .72rem; }
+.module-study-button { display: inline-flex; min-height: 34px; align-items: center; gap: .4rem; border-radius: .7rem; background: #eff6ff; color: #1d4ed8; padding: .4rem .72rem; font-size: .72rem; font-weight: 750; transition: background 150ms ease, transform 150ms ease; }
+.module-study-button:hover { background: #dbeafe; }
+.module-study-button:active { transform: scale(.96); }
+
+[data-theme='dark'] .focus-status-idle { background: #253146; color: #cbd5e1; }
+[data-theme='dark'] .focus-status-running { background: #123326; color: #86efac; }
+[data-theme='dark'] .focus-status-paused { background: #362b12; color: #fde68a; }
+[data-theme='dark'] .focus-total-icon { background: #172b4f; color: #93c5fd; }
+[data-theme='dark'] .module-study-button { background: #172b4f; color: #bfdbfe; }
+
+@media (min-width: 900px) {
+  .focus-studio { grid-template-columns: minmax(0, 1.6fr) minmax(18rem, .8fr); }
+  .focus-main { padding: 1.75rem 2rem 2rem; }
+  .focus-summary { border-top: 0; border-left: 1px solid var(--app-border); padding: 1.75rem; }
+}
+
+@media (max-width: 480px) {
+  .focus-clock-wrap::before { width: 13rem; height: 13rem; }
+  .focus-clock { min-height: 11.5rem; aspect-ratio: 1.45 / 1; }
+  .focus-time { font-size: 2.65rem; }
+  .focus-controls .icon-button { width: 42px; height: 42px; }
+}
+
+@keyframes focus-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.78); } }
+@keyframes focus-breathe { 0%, 100% { opacity: .7; transform: translate(-50%, -50%) scale(.96); } 50% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); } }
+
+
+
+/* Focus timer accessibility hardening */
+.focus-clock-label {
+  max-width: min(80%, 18rem);
+  overflow: hidden;
+  color: var(--app-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.module-study-button { min-height: 44px; }
+
+
+
+/* Module-card contrast and overflow safety */
+.module-monogram {
+  box-shadow: inset 0 0 0 999px rgba(15, 23, 42, .24), 0 7px 16px rgba(15, 23, 42, .16);
+}
+.module-code-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

@@ -5,6 +5,7 @@ import { ConnectionProvider, useAccount } from '../contexts/AccountContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ThemePreference, useTheme } from '../contexts/ThemeContext';
 import BackgroundPicker from './BackgroundPicker';
+import NotificationSettings from './NotificationSettings';
 
 const PROFILE_PICTURE_MAX_LENGTH = 200_000;
 const PROFILE_PICTURE_PATTERN = /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
@@ -360,6 +361,8 @@ function AccountSettings() {
           </form>
         </section>
       )}
+
+      <NotificationSettings />
 
       <section className="card" aria-labelledby="appearance-heading">
         <div className="mb-5">

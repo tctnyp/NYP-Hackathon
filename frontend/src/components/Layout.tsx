@@ -16,6 +16,7 @@ import { ReactNode, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccount } from '../contexts/AccountContext';
 import { usePwa } from '../contexts/PwaContext';
+import TaskNotificationManager from './TaskNotificationManager';
 
 interface LayoutProps {
   children: ReactNode;
@@ -66,6 +67,7 @@ function Layout({ children }: LayoutProps) {
 
   return (
     <div className="app-shell min-h-[100dvh]">
+      <TaskNotificationManager />
       <header className="app-surface safe-top fixed inset-x-0 top-0 z-30 border-b px-4 pb-3 pt-3 backdrop-blur-xl lg:hidden">
         <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">

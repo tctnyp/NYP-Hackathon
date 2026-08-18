@@ -4,6 +4,7 @@ import { dashboardApi } from '../services/api';
 import { AlertCircle, ArrowRight, CheckCircle2, Clock3, ListTodo, Plus, RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
 import type { DashboardData, Task } from '../types/api';
 import { useAccount } from '../contexts/AccountContext';
+import NotificationPrompt from './NotificationPrompt';
 
 function friendlyDeadline(task: Task) {
   const deadline = new Date(task.deadline);
@@ -89,6 +90,8 @@ function Dashboard() {
         </div>
         <Link to="/tasks?create=1" className="btn-primary inline-flex items-center justify-center gap-2"><Plus size={18} /> New task</Link>
       </header>
+
+      <NotificationPrompt />
 
       {error && (
         <div className="alert-error" role="alert">

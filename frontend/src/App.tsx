@@ -23,8 +23,8 @@ import AccountSettingsRoute from './components/AccountSettingsRoute';
 function App() {
   return (
     <ThemeProvider>
-      <PwaProvider>
-        <AuthProvider>
+      <AuthProvider>
+        <PwaProvider>
           <AccountProvider>
             <Router>
             <Routes>
@@ -63,8 +63,8 @@ function App() {
             </Routes>
             </Router>
           </AccountProvider>
-        </AuthProvider>
-      </PwaProvider>
+        </PwaProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }
