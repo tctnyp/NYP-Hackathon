@@ -1456,3 +1456,7 @@ select:disabled {
 
 .onboarding-error span { display: block; }
 .onboarding-error button { min-height: 44px; margin-top: .45rem; border-radius: .6rem; background: color-mix(in srgb, currentColor 10%, transparent); padding: .45rem .65rem; font-size: .72rem; font-weight: 800; }
+
+.android-sheet.safe-bottom {
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+}

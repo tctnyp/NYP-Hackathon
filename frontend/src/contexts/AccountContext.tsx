@@ -77,7 +77,13 @@ function errorMessage(error: unknown): string {
     const response = (error as { response?: { data?: { error?: string; message?: string } } }).response;
     return response?.data?.error || response?.data?.message || 'Unable to update account.';
   }
-  return error instanceof Error ? error.message : 'Unable to update account.';
+  if (error instanceof Error) {
+    if (error.message.toLowerCase() === 'network error') {
+      return 'Unable to reach the service. Check your connection and try again.';
+    }
+    return error.message;
+  }
+  return 'Unable to update account.';
 }
 
 function hasGoogleIdentity(user: ReturnType<typeof useAuth>['user']): boolean {
@@ -131,14 +137,16 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError('');
     try {
-      const [accountResponse, calendarResponse] = await Promise.all([
+      const [accountResult, calendarResult] = await Promise.allSettled([
         accountApi.get(),
         googleCalendarApi.get(),
       ]);
-      applyAccountData(accountResponse.data.data);
-      setCalendarSync(calendarResponse.data.data.calendar_sync);
-    } catch (requestError) {
-      setError(errorMessage(requestError));
+      if (accountResult.status === 'fulfilled') {
+        applyAccountData(accountResult.value.data.data);
+      }
+      if (calendarResult.status === 'fulfilled') {
+        setCalendarSync(calendarResult.value.data.data.calendar_sync);
+      }
     } finally {
       setLoading(false);
     }
