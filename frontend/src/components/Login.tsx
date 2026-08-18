@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { LogIn, Mail, Lock, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import SocialAuthButtons from './SocialAuthButtons';
-import { AUTH_STORAGE_CHANGE_EVENT, tokenStorage } from '../services/authStorage';
 
 function Login() {
   const navigate = useNavigate();
@@ -16,13 +15,6 @@ function Login() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [rememberBrowser, setRememberBrowser] = useState(() => tokenStorage.getPreference() === 'persistent');
-
-  useEffect(() => {
-    const synchronize = () => setRememberBrowser(tokenStorage.getPreference() === 'persistent');
-    window.addEventListener(AUTH_STORAGE_CHANGE_EVENT, synchronize);
-    return () => window.removeEventListener(AUTH_STORAGE_CHANGE_EVENT, synchronize);
-  }, []);
 
   const from = (location.state as any)?.from?.pathname || '/dashboard';
 
@@ -32,8 +24,7 @@ function Login() {
     setLoading(true);
 
     try {
-      const preference = tokenStorage.setPreference(rememberBrowser ? 'persistent' : 'session');
-      await signIn(formData.username, formData.password, preference);
+      await signIn(formData.username, formData.password);
       navigate(from, { replace: true });
     } catch (err: any) {
       setError(err.message || 'Failed to sign in');
@@ -100,24 +91,6 @@ function Login() {
               </div>
             </div>
 
-            <label className="flex items-start gap-3 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={rememberBrowser}
-                disabled={loading}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                onChange={(event) => {
-                  const requested = event.target.checked ? 'persistent' : 'session';
-                  const applied = tokenStorage.setPreference(requested);
-                  setRememberBrowser(applied === 'persistent');
-                }}
-              />
-              <span>
-                <span className="font-medium">Keep me signed in on this device</span>
-                <span className="mt-0.5 block text-xs text-gray-500">Do not enable this on a shared or public device.</span>
-              </span>
-            </label>
-
             <div className="flex items-center justify-between text-sm">
               <Link to="/forgot-password" className="text-primary-600 hover:text-primary-700 font-medium">
                 Forgot password?
@@ -133,7 +106,7 @@ function Login() {
             </button>
           </form>
 
-          <SocialAuthButtons mode="login" returnTo={from} onError={setError} storagePreference={rememberBrowser ? 'persistent' : 'session'} />
+          <SocialAuthButtons mode="login" returnTo={from} onError={setError} />
 
           <div className="mt-6 text-center text-sm text-gray-600">
             Don't have an account?{' '}

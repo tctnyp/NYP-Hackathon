@@ -35,7 +35,6 @@ process.env.DISCORD_OAUTH_REDIRECT_URI = 'https://nypxaws.tancheetiong.com/accou
 process.env.GOOGLE_OAUTH_CLIENT_ID = 'google-client';
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'google-secret';
 process.env.GOOGLE_OAUTH_REDIRECT_URI = 'https://nypxaws.tancheetiong.com/account/settings';
-process.env.CALENDAR_CONNECTIONS_TABLE = 'calendar-test';
 
 const account = require('../src/handlers/account');
 
@@ -372,21 +371,6 @@ describe('account handler', () => {
     expect(data.connections.discord.connected).toBe(true);
     expect(data.connections.discord.disconnect_allowed).toBe(false);
     expect(data.password_change_available).toBe(false);
-    expect(mockCognitoSend).not.toHaveBeenCalled();
-  });
-
-  test('requires Calendar cleanup before disconnecting a linked Google identity', async () => {
-    mockGetItem.mockResolvedValueOnce({
-      ...existingProfile,
-      oauth_connection_google: { provider_user_id: 'google-subject', email: 'student@example.com' },
-    });
-    mockDocumentSend.mockResolvedValueOnce({
-      Item: { user_id: 'user-123', status: 'enabled', encrypted_refresh_token: { ciphertext: 'encrypted' } },
-    });
-
-    const response = await account.upsertProfile(event({ action: 'disconnect', provider: 'google' }));
-    expect(response.statusCode).toBe(409);
-    expect(JSON.parse(response.body).error).toMatch(/disable google calendar/i);
     expect(mockCognitoSend).not.toHaveBeenCalled();
   });
 

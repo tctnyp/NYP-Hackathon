@@ -17,16 +17,14 @@ import Dashboard from './components/Dashboard';
 import TaskList from './components/TaskList';
 import Calendar from './components/Calendar';
 import Modules from './components/Modules';
-import PriorityView from './components/PriorityView';
 import AdminPanel from './components/AdminPanel';
 import AccountSettingsRoute from './components/AccountSettingsRoute';
-import LoginStoragePrompt from './components/LoginStorageConsent';
 
 function App() {
   return (
     <ThemeProvider>
-      <PwaProvider>
-        <AuthProvider>
+      <AuthProvider>
+        <PwaProvider>
           <AccountProvider>
             <Router>
             <Routes>
@@ -49,7 +47,6 @@ function App() {
                         <Route path="/tasks" element={<TaskList />} />
                         <Route path="/calendar" element={<Calendar />} />
                         <Route path="/modules" element={<Modules />} />
-                        <Route path="/priority" element={<PriorityView />} />
                         <Route
                           path="/admin"
                           element={
@@ -65,10 +62,9 @@ function App() {
               />
             </Routes>
             </Router>
-            <LoginStoragePrompt />
           </AccountProvider>
-        </AuthProvider>
-      </PwaProvider>
+        </PwaProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

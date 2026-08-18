@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { Task, Module, DashboardData, AIRecommendations } from '../types/api';
+import type { Task, Module, DashboardData } from '../types/api';
 import { tokenStorage, cognitoAuth } from './cognitoAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://your-api-url.com/dev';
@@ -11,7 +11,6 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
-// Request interceptor - add Authorization Bearer ID token
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const idToken = tokenStorage.getIdToken();
@@ -20,10 +19,9 @@ apiClient.interceptors.request.use(
     }
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 );
 
-// Response interceptor - handle token refresh on 401
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (value?: any) => void;
@@ -48,7 +46,6 @@ apiClient.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
-        // Queue requests while refreshing
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
@@ -86,7 +83,7 @@ apiClient.interceptors.response.use(
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 export const tasksApi = {
@@ -108,10 +105,7 @@ export const dashboardApi = {
   get: () => apiClient.get<{ data: DashboardData }>('/dashboard'),
 };
 
-export const aiApi = {
-  getPrioritization: () => apiClient.post<{ data: { recommendations: AIRecommendations } }>('/ai/prioritize'),
-  getBreakdown: (taskId: string) => apiClient.post(`/ai/breakdown/${taskId}`),
-};
+export default apiClient;
 
 export interface AccountApiProfile {
   display_name: string;
@@ -145,35 +139,4 @@ export const accountApi = {
   disconnect: (provider: 'google' | 'discord') => (
     apiClient.put<AccountApiResponse>('/account', { action: 'disconnect', provider })
   ),
-};
-
-export default apiClient;
-
-export interface GoogleCalendarSyncStatus {
-  linked: boolean;
-  available: boolean;
-  enabled: boolean;
-  status: 'disabled' | 'enabled' | 'disable_pending' | 'reauthorization_required' | string;
-  calendar_email?: string;
-  last_sync_at?: string;
-  last_attempt_at?: string;
-  last_error?: string | null;
-}
-
-type CalendarApiResponse = {
-  data: {
-    calendar_sync: GoogleCalendarSyncStatus;
-    authorization_url?: string;
-    expires_at?: string;
-  };
-};
-
-export const googleCalendarApi = {
-  get: () => apiClient.get<CalendarApiResponse>('/calendar/google'),
-  authorize: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'authorize' }),
-  callback: (code: string, state: string) => (
-    apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'callback', code, state })
-  ),
-  sync: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'sync' }),
-  disable: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'disable' }),
 };

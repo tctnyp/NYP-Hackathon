@@ -4,7 +4,7 @@ const {
   AdminLinkProviderForUserCommand,
   CognitoIdentityProviderClient,
 } = require('@aws-sdk/client-cognito-identity-provider');
-const { DeleteCommand, GetCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const {
   docClient,
   getItem,
@@ -25,7 +25,6 @@ const {
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.REGION || 'us-east-1' });
 const USER_POOL_ID = process.env.USER_POOL_ID;
-const CALENDAR_CONNECTIONS_TABLE = process.env.CALENDAR_CONNECTIONS_TABLE;
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const SENSITIVE_AUTH_MAX_AGE_SECONDS = 10 * 60;
 const MAX_PROFILE_PICTURE_LENGTH = 200 * 1024;
@@ -445,8 +444,6 @@ async function exchangeGoogleCode(event, code, config) {
     provider_user_id: user.sub,
     email: user.email,
     ...(typeof user.name === 'string' ? { display_name: user.name } : {}),
-    link_version: randomBytes(16).toString('base64url'),
-    status: 'active',
     connected_at: timestamp(),
   };
 }
@@ -570,51 +567,17 @@ async function disconnect(event, body, profile) {
       return error('The primary Google sign-in cannot be disconnected', 409);
     }
 
-    if (CALENDAR_CONNECTIONS_TABLE) {
-      const calendarResponse = await docClient.send(new GetCommand({
-        TableName: CALENDAR_CONNECTIONS_TABLE,
-        Key: { user_id: getUserId(event) },
-      }));
-      const calendarConnection = calendarResponse.Item;
-      if (calendarConnection?.encrypted_refresh_token || ['enabled', 'disable_pending', 'cleanup_reauthorization_required'].includes(calendarConnection?.status)) {
-        return error('Disable Google Calendar synchronization before disconnecting Google', 409);
-      }
-      if (calendarConnection) {
-        await docClient.send(new DeleteCommand({
-          TableName: CALENDAR_CONNECTIONS_TABLE,
-          Key: { user_id: getUserId(event) },
-        }));
-      }
-    }
-
-    const googleConnection = profile?.oauth_connection_google;
-    const providerUserId = googleConnection?.provider_user_id || googleIdentity(event)?.userId;
+    const providerUserId = profile?.oauth_connection_google?.provider_user_id || googleIdentity(event)?.userId;
     if (providerUserId) {
       if (!USER_POOL_ID) throw new Error('Cognito account linking is not configured');
-      if (googleConnection) {
-        await updateItem(USERS_TABLE, { user_id: getUserId(event) }, {
-          oauth_connection_google: { ...googleConnection, status: 'unlinking' },
-          updated_at: timestamp(),
-        });
-      }
-      try {
-        await cognitoClient.send(new AdminDisableProviderForUserCommand({
-          UserPoolId: USER_POOL_ID,
-          User: {
-            ProviderName: 'Google',
-            ProviderAttributeName: 'Cognito_Subject',
-            ProviderAttributeValue: providerUserId,
-          },
-        }));
-      } catch (unlinkError) {
-        if (googleConnection) {
-          await updateItem(USERS_TABLE, { user_id: getUserId(event) }, {
-            oauth_connection_google: { ...googleConnection, status: 'active' },
-            updated_at: timestamp(),
-          });
-        }
-        throw unlinkError;
-      }
+      await cognitoClient.send(new AdminDisableProviderForUserCommand({
+        UserPoolId: USER_POOL_ID,
+        User: {
+          ProviderName: 'Google',
+          ProviderAttributeName: 'Cognito_Subject',
+          ProviderAttributeValue: providerUserId,
+        },
+      }));
     }
   }
 
