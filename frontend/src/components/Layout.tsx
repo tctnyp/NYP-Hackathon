@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, CheckSquare, Calendar, BookOpen, Target, LogOut, Menu, X, Shield } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, Calendar, BookOpen, LogOut, Menu, X, Shield } from 'lucide-react';
 import { useState, ReactNode } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -17,7 +17,6 @@ function Layout({ children }: LayoutProps) {
     { name: 'Tasks', href: '/tasks', icon: CheckSquare },
     { name: 'Calendar', href: '/calendar', icon: Calendar },
     { name: 'Modules', href: '/modules', icon: BookOpen },
-    { name: 'Priority View', href: '/priority', icon: Target },
   ];
 
   // Add admin panel if user is admin

@@ -14,7 +14,6 @@ import Dashboard from './components/Dashboard';
 import TaskList from './components/TaskList';
 import Calendar from './components/Calendar';
 import Modules from './components/Modules';
-import PriorityView from './components/PriorityView';
 import AdminPanel from './components/AdminPanel';
 
 function App() {
@@ -22,7 +21,6 @@ function App() {
     <AuthProvider>
       <Router>
         <Routes>
-          {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/verify" element={<Verify />} />
@@ -30,7 +28,6 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* Protected routes */}
           <Route
             path="/*"
             element={
@@ -42,7 +39,6 @@ function App() {
                     <Route path="/tasks" element={<TaskList />} />
                     <Route path="/calendar" element={<Calendar />} />
                     <Route path="/modules" element={<Modules />} />
-                    <Route path="/priority" element={<PriorityView />} />
                     <Route
                       path="/admin"
                       element={

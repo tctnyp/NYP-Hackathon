@@ -414,36 +414,6 @@ Resources:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: /dashboard, Method: GET }
 
-  AIPrioritizeFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Role: !Ref LabRoleArn
-      Handler: handlers/labAi.prioritize
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /ai/prioritize, Method: POST }
-
-  AIBreakdownFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Role: !Ref LabRoleArn
-      Handler: handlers/labAi.breakdown
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/ai/breakdown/{taskId}', Method: POST }
-
-  AgentInvokeFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Role: !Ref LabRoleArn
-      Handler: handlers/labAi.agent
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties: { RestApiId: !Ref TaskManagerApi, Path: /ai/agent, Method: POST }
-
   ReminderCheckerFunction:
     Type: AWS::Serverless::Function
     Properties:
