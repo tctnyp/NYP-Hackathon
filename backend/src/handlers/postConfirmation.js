@@ -21,6 +21,7 @@ exports.handler = async (event) => {
     }
 
     const now = new Date().toISOString();
+    const onboardingRequired = event.triggerSource === 'PostConfirmation_ConfirmSignUp';
 
     // Create user profile
     const profileCommand = new PutCommand({
@@ -28,11 +29,12 @@ exports.handler = async (event) => {
       Item: {
         user_id: sub,
         email: email,
+        email_normalized: email.trim().toLowerCase(),
         full_name: name || email.split('@')[0] || 'User',
         organization_id: null,
         school_id: null,
         class_id: null,
-        preferences: {},
+        preferences: onboardingRequired ? { onboarding_required: true } : {},
         role: 'user',
         auth_provider: identities ? 'federated' : 'cognito',
         created_at: now,
