@@ -239,3 +239,20 @@ export const googleCalendarApi = {
   sync: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'sync' }),
   disable: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'disable' }),
 };
+
+export interface SmartAssistantRequest {
+  prompt: string;
+  include_context: boolean;
+}
+
+export interface SmartAssistantData {
+  reply: string;
+  model: string;
+  context_used: boolean;
+}
+
+export const smartAssistantApi = {
+  ask: (data: SmartAssistantRequest) => (
+    apiClient.post<{ data: SmartAssistantData }>('/smart-assistant', data, { timeout: 35_000 })
+  ),
+};

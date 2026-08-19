@@ -19,6 +19,7 @@ import Calendar from './components/Calendar';
 import Modules from './components/Modules';
 import Groups from './components/Groups';
 import AdminPanel from './components/AdminPanel';
+import SmartAssistant from './components/SmartAssistant';
 import AccountSettingsRoute from './components/AccountSettingsRoute';
 import LoginStoragePrompt from './components/LoginStorageConsent';
 
@@ -50,6 +51,7 @@ function App() {
                         <Route path="/calendar" element={<Calendar />} />
                         <Route path="/modules" element={<Modules />} />
                         <Route path="/groups" element={<Groups />} />
+                        <Route path="/smart-ai" element={<SmartAssistant />} />
                         <Route
                           path="/admin"
                           element={
