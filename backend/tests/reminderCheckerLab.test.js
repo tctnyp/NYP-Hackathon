@@ -19,7 +19,7 @@ jest.mock('../src/utils/database', () => ({
   timestamp: jest.fn(() => '2026-08-18T12:00:00.000Z'),
 }));
 
-process.env.REMINDER_FROM_EMAIL = 'noreply@example.com';
+process.env.REMINDER_FROM_EMAIL = 'noreply@munera.com';
 process.env.APP_URL = 'https://app.example.com';
 const reminderChecker = require('../src/handlers/reminderCheckerLab');
 
@@ -70,7 +70,7 @@ describe('deployed reminder checker SES delivery and scan fairness', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
-    process.env.REMINDER_FROM_EMAIL = 'noreply@example.com';
+    process.env.REMINDER_FROM_EMAIL = 'noreply@munera.com';
     mockGetItem.mockImplementation(defaultGetItem);
     mockScanPage
       .mockResolvedValueOnce({ Items: [reminder], LastEvaluatedKey: reminderNextKey })
@@ -113,7 +113,7 @@ describe('deployed reminder checker SES delivery and scan fairness', () => {
     expect(response.statusCode).toBe(200);
     expect(mockSesSend).toHaveBeenCalledTimes(1);
     const input = mockSesSend.mock.calls[0][0].input;
-    expect(input.FromEmailAddress).toBe('noreply@example.com');
+    expect(input.FromEmailAddress).toBe('noreply@munera.com');
     expect(input.Destination.ToAddresses).toEqual(['student@example.com']);
     expect(input.Content.Simple.Body.Text.Data).toContain('https://app.example.com');
     expect(mockUpdateItem).toHaveBeenCalledWith(

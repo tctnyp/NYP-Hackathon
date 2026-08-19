@@ -35,6 +35,7 @@ describe('Cognito native MFA deployment configuration', () => {
   });
 
   test('does not enable email OTP unless both the explicit gate and SES sender exist', () => {
+    expect(template).toMatch(/CognitoFromEmail:\r?\n\s+Type: String\r?\n\s+Default: noreply@munera\.com/);
     expect(template).toMatch(/EnableNativeEmailMfa:\r?\n\s+Type: String\r?\n\s+Default: 'false'/);
     expect(template).toContain('HasNativeEmailMfa: !And');
     expect(template).toContain("- !Equals [!Ref EnableNativeEmailMfa, 'true']");

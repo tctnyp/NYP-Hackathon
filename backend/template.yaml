@@ -149,7 +149,7 @@ Parameters:
     Description: Existing Discord OIDC session table name required when social infrastructure is externally managed
   CognitoFromEmail:
     Type: String
-    Default: noreply@tancheetiong.com
+    Default: noreply@munera.com
     Description: From address for Cognito transactional emails when an SES identity ARN is supplied
   CognitoEmailSourceArn:
     Type: String
