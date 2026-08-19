@@ -118,6 +118,27 @@ describe('Google Calendar consent handler', () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  test('offers Calendar consent to a Google-origin Cognito user without a stored link record', async () => {
+    mockGetGoogleLinkProfile.mockResolvedValue({ user_id: 'user-123' });
+    const response = await calendar.update(event({ action: 'authorize' }, {
+      'cognito:username': 'Google_primary',
+      identities: JSON.stringify([{ providerName: 'Google', userId: 'google-subject' }]),
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(responseData(response).authorization_url).toContain('accounts.google.com');
+  });
+
+  test('offers Calendar consent to a Discord-origin Cognito user with a stored Google link', async () => {
+    const response = await calendar.update(event({ action: 'authorize' }, {
+      'cognito:username': 'Discord_primary',
+      identities: JSON.stringify([{ providerName: 'Discord', userId: 'discord-subject' }]),
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(responseData(response).authorization_url).toContain('accounts.google.com');
+  });
+
   test('stores only a purpose-bound state hash and requests exact offline Calendar consent', async () => {
     const response = await calendar.update(event({ action: 'authorize' }));
     const data = responseData(response);

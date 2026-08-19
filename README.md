@@ -18,7 +18,8 @@ Academic Tasks is a responsive academic workload manager for deadlines, assignme
 - Light, dark, and system themes
 - Solid colors, gradient presets, custom gradients, and local image backgrounds
 - Cognito authentication with Google and Discord federation
-- Account Settings for profile, appearance, password, and provider connections
+- Optional AWS Cognito native MFA for password-primary accounts, with authenticator-app TOTP and deployment-gated email OTP
+- Account Settings for profile, appearance, password, MFA, and provider connections
 - EventBridge deadline/reminder checks every 15 minutes with direct per-user Amazon SES email; separate Calendar reconciliation runs every minute
 
 Experimental planning/recommendation routes, handlers, schemas, and frontend surfaces are intentionally excluded from `main` and remain isolated to `dev`. The production Textract route is a bounded extraction aid: documents are not stored, suggestions require user review, and no task is created automatically.
@@ -46,6 +47,22 @@ The regional API Gateway REST API uses a Cognito authorizer for protected applic
 Private reminders are addressed directly to one user's profile email through SES rather than broadcast through SNS. A legacy SNS topic may remain for infrastructure compatibility, but it is not the private notification transport. SES requires a verified source identity and, while the account is in the SES sandbox, compliant verified recipients. The externally supplied LabRole must permit `ses:SendEmail` and `textract:AnalyzeDocument` in addition to the application's existing service actions.
 
 Operational credentials, account identifiers, identity ARNs, and secrets are intentionally not published. Provider and OIDC signing secrets remain in protected deployment parameters; see [`frontend/OAUTH_SETUP.md`](frontend/OAUTH_SETUP.md) for the non-secret Google and Discord Cognito configuration, Calendar two-phase key rotation, redirect contract, and mandatory execution-role permission preflight.
+
+**Deployment update safety:** every SAM deployment must preserve or explicitly resupply all Google, Discord, OIDC, Calendar, and native-email-MFA parameter values. Omitting the protected `NoEcho` overrides or allowing other integration parameters to fall back to empty defaults, which disables provider linking, removes the Cognito IdPs from the app client, and makes Calendar report `Setup required` even when an older stored connection still appears linked. Calendar may reuse `GoogleOAuthClientId` and `GoogleOAuthClientSecret`; the dedicated Calendar client parameters are optional overrides, but `EnableGoogleCalendarSync=true`, a matching Calendar redirect URI, and a 32-byte encryption key remain required.
+
+## Native multi-factor authentication
+
+The Cognito user pool uses `MfaConfiguration: OPTIONAL` so existing users are not locked out during rollout. Password-primary local users can enroll a standards-compatible authenticator app (including Google Authenticator) from Account Settings. Cognito issues and verifies the TOTP secret, and the application keeps that secret only in the active setup screen. During sign-in, the browser does not persist ID, access, or refresh tokens until Cognito accepts the native `SOFTWARE_TOKEN_MFA` or `EMAIL_OTP` challenge.
+
+Google and Discord federated sign-ins are different: Cognito delegates their complete authentication to the identity provider and cannot impose a Cognito second factor afterward. Those users must configure MFA with Google or Discord. Linking Google or Discord to an account is not treated as MFA, and a post-token UI prompt would not protect the Cognito-authorized API.
+
+Authenticator-app TOTP is always available to local users. Native email OTP is off by default and is enabled only when both `EnableNativeEmailMfa=true` and a verified SES identity ARN is supplied through `CognitoEmailSourceArn`; this selects Cognito `DEVELOPER` email delivery and requires the Cognito Essentials tier configured by the template. Do not enable email OTP until SES configuration is verified. Cognito cannot send password-recovery codes to the same email while that email is the user's MFA method, so the environment must have a documented administrator-assisted or alternate recovery path first.
+
+For the safe default deployment, use:
+
+```text
+EnableNativeEmailMfa=false
+```
 
 ## Smart AI configuration
 

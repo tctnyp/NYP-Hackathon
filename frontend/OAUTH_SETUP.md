@@ -28,7 +28,7 @@ https://<frontend-origin>/account/settings
 
 The first serves Cognito Hosted UI sign-in/signup. The second is `GoogleOAuthRedirectUri` for authenticated Account Settings linking. Supply `GoogleOAuthClientId` and `GoogleOAuthClientSecret` through deployment parameters. Cognito maps the provider's verified identity into the user pool.
 
-Google sign-in and authenticated account linking are separate flows. The externally supplied Lambda role must allow `cognito-idp:AdminLinkProviderForUser` and `cognito-idp:AdminDisableProviderForUser` on the deployed user pool. Keep the Cognito native user as `DestinationUser` and Google `Cognito_Subject` as `SourceUser`; reversing them breaks linking. If a Google identity already created a standalone federated Cognito profile, the application returns an actionable conflict and does not automatically delete or merge either profile because doing so could orphan application data.
+Google sign-in and authenticated account linking are separate flows. The externally supplied Lambda role must allow `cognito-idp:AdminLinkProviderForUser` and `cognito-idp:AdminDisableProviderForUser` on the deployed user pool. `DestinationUser` must always be `{ ProviderName: "Cognito", ProviderAttributeValue: <cognito:username> }`, including when that username is provider-prefixed such as `Google_<subject>` or `Discord_<subject>`; the new Google/Discord `Cognito_Subject` belongs only in `SourceUser`. Replacing the destination username with the provider subject breaks cross-provider linking. If a provider identity already created a standalone federated Cognito profile, the application returns an actionable conflict and does not automatically delete or merge either profile because doing so could orphan application data.
 
 ## Discord login and signup
 
@@ -36,16 +36,18 @@ Discord exposes OAuth 2.0 but not the OpenID Connect discovery, JWKS, ID-token, 
 
 ### Redirects
 
-Register this Discord application redirect:
+Register exactly one callback in the Discord application:
 
 ```text
 https://<frontend-origin>/account/settings
 ```
 
-The route serves two purposes, distinguished by cryptographically random state prefixes:
+Both Discord login/signup and authenticated Account Settings linking use this same external callback. The SPA distinguishes the cryptographically random state prefixes and forwards each result to the correct protected or public backend continuation:
 
 - `discord.*`: authenticated Account Settings connection callbacks;
 - `oidc.*`: signed-out Discord login/signup handoffs to the public bridge callback.
+
+A successful Discord Hosted UI login is itself the Discord connection: Cognito claims immediately mark Discord as connected, and first-sign-in profile creation stores non-secret primary-connection metadata. The user must never authorize Discord a second time from Account Settings. The primary Discord connection cannot be unlinked.
 
 The OIDC bridge ultimately returns to Cognito at:
 
@@ -126,12 +128,13 @@ https://<frontend-origin>/account/settings
 Enable the Google Calendar API for that Google Cloud project. Supply these protected SAM parameters:
 
 - `EnableGoogleCalendarSync=true`
-- `GoogleCalendarOAuthClientId`
-- `GoogleCalendarOAuthClientSecret`
+- `GoogleCalendarOAuthClientId` and `GoogleCalendarOAuthClientSecret` — optional dedicated Calendar-client overrides; when both are empty, the backend reuses `GoogleOAuthClientId` and `GoogleOAuthClientSecret`
 - `GoogleCalendarOAuthRedirectUri`
 - `GoogleCalendarEncryptionKeyBase64` — exactly 32 cryptographically random bytes encoded as canonical base64
 - `GoogleCalendarPreviousEncryptionKeyBase64` — normally empty; during rotation retain the former key here until all credentials are reauthorized or migrated
 - `GoogleCalendarRevokeOnDisable` — keep `false` when the Google project is also used for sign-in; set `true` only for a dedicated Calendar project because Google revocation can remove project-wide grants
+
+The selected OAuth client must have the Calendar API enabled and must register the exact Calendar redirect URI. On stack updates, preserve or resupply every Google, Discord, OIDC, and Calendar parameter—especially `NoEcho` values. Omitting them from a SAM deployment applies empty defaults, disables the integrations, and can leave stale stored connections visible even though new linking and Calendar setup are unavailable.
 
 Generate encryption values outside the repository and pass them only through the protected deployment channel. Never put them in `.env`, frontend variables, source control, command logs, or deployment archives. Rotate in two deployments: first move the old current key to `GoogleCalendarPreviousEncryptionKeyBase64` while installing the new current key; clear the previous key only after credentials have been reauthorized or migrated. If neither retained key can authenticate a cleanup credential, the backend enters `cleanup_reauthorization_required` rather than retrying forever.
 

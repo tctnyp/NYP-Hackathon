@@ -175,10 +175,18 @@ export interface AccountApiProfile {
   [key: string]: unknown;
 }
 
+export interface NativeMfaCapability {
+  available: boolean;
+  totp_available: boolean;
+  email_available: boolean;
+  provider_managed: 'google' | 'discord' | null;
+}
+
 export interface AccountApiData {
   profile: AccountApiProfile;
   connections: Record<string, boolean | { connected: boolean; [key: string]: unknown }>;
   password_change_available: boolean;
+  native_mfa: NativeMfaCapability;
   authorization_url?: string;
   url?: string;
 }

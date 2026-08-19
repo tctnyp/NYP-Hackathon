@@ -62,12 +62,12 @@ Parameters:
   GoogleCalendarOAuthClientId:
     Type: String
     Default: ''
-    Description: OAuth client ID used only for explicit Google Calendar consent
+    Description: Optional dedicated Calendar OAuth client ID; when empty, reuse GoogleOAuthClientId
   GoogleCalendarOAuthClientSecret:
     Type: String
     Default: ''
     NoEcho: true
-    Description: OAuth client secret used only by Google Calendar synchronization Lambdas
+    Description: Optional dedicated Calendar OAuth client secret; when empty, reuse GoogleOAuthClientSecret
   GoogleCalendarOAuthRedirectUri:
     Type: String
     Default: https://nypxaws.tancheetiong.com/account/settings
@@ -155,16 +155,26 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional ARN of a verified SES email or domain identity used by Cognito
+  EnableNativeEmailMfa:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable Cognito EMAIL_OTP MFA only when CognitoEmailSourceArn is a verified SES identity; users selecting it require an alternate or administrator-assisted recovery path
 
 Conditions:
   HasGoogleOAuth: !And
     - !Not [!Equals [!Ref GoogleOAuthClientId, '']]
     - !Not [!Equals [!Ref GoogleOAuthClientSecret, '']]
     - !Not [!Equals [!Ref GoogleOAuthRedirectUri, '']]
-  HasGoogleCalendarSync: !And
-    - !Equals [!Ref EnableGoogleCalendarSync, 'true']
+  HasDedicatedGoogleCalendarOAuth: !And
     - !Not [!Equals [!Ref GoogleCalendarOAuthClientId, '']]
     - !Not [!Equals [!Ref GoogleCalendarOAuthClientSecret, '']]
+  HasGoogleCalendarOAuth: !Or
+    - !Condition HasDedicatedGoogleCalendarOAuth
+    - !Condition HasGoogleOAuth
+  HasGoogleCalendarSync: !And
+    - !Equals [!Ref EnableGoogleCalendarSync, 'true']
+    - !Condition HasGoogleCalendarOAuth
     - !Not [!Equals [!Ref GoogleCalendarOAuthRedirectUri, '']]
     - !Not [!Equals [!Ref GoogleCalendarEncryptionKeyBase64, '']]
   HasDiscordBridgeConfiguration: !And
@@ -178,6 +188,9 @@ Conditions:
     - !Condition HasDiscordBridgeConfiguration
     - !Equals [!Ref EnableDiscordCognito, 'true']
   HasCustomEmailSender: !Not [!Equals [!Ref CognitoEmailSourceArn, '']]
+  HasNativeEmailMfa: !And
+    - !Equals [!Ref EnableNativeEmailMfa, 'true']
+    - !Condition HasCustomEmailSender
   ManageSocialInfrastructureResources: !Equals [!Ref ManageSocialInfrastructure, 'true']
   CreateGoogleIdentityProvider: !And [!Condition ManageSocialInfrastructureResources, !Condition HasGoogleOAuth]
   CreateDiscordIdentityProvider: !And [!Condition ManageSocialInfrastructureResources, !Condition HasDiscordOIDC]
@@ -196,6 +209,7 @@ Globals:
         REGION: !Ref AWS::Region
         ENVIRONMENT: !Ref Environment
         ADMIN_USERNAME: !Ref AdminUsername
+        NATIVE_EMAIL_MFA_ENABLED: !If [HasNativeEmailMfa, 'true', 'false']
         TASKS_TABLE: !Ref TasksTable
         USERS_TABLE: !Ref UsersTable
         MEDIA_BUCKET: !Ref MediaBucket
@@ -301,6 +315,13 @@ Resources:
     DependsOn: PostConfirmationInvokePermission
     Properties:
       UserPoolName: !Sub academic-task-manager-${Environment}
+      UserPoolTier: ESSENTIALS
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+        - !If [HasNativeEmailMfa, EMAIL_OTP, !Ref 'AWS::NoValue']
+      EmailAuthenticationSubject: !If [HasNativeEmailMfa, Your Academic Tasks sign-in code, !Ref 'AWS::NoValue']
+      EmailAuthenticationMessage: !If [HasNativeEmailMfa, 'Your Academic Tasks sign-in code is {####}.', !Ref 'AWS::NoValue']
       AliasAttributes:
         - email
       AutoVerifiedAttributes:
@@ -870,7 +891,7 @@ Resources:
       Environment:
         Variables:
           GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
-          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !Ref GoogleCalendarOAuthClientId
+          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientId, !Ref GoogleOAuthClientId]
           GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
       Events:
         ApiEvent:
@@ -886,8 +907,8 @@ Resources:
       Environment:
         Variables:
           GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
-          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !Ref GoogleCalendarOAuthClientId
-          GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !Ref GoogleCalendarOAuthClientSecret
+          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientId, !Ref GoogleOAuthClientId]
+          GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientSecret, !Ref GoogleOAuthClientSecret]
           GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
           GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarEncryptionKeyBase64
           GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarPreviousEncryptionKeyBase64
@@ -913,8 +934,8 @@ Resources:
       Environment:
         Variables:
           GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
-          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !Ref GoogleCalendarOAuthClientId
-          GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !Ref GoogleCalendarOAuthClientSecret
+          GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientId, !Ref GoogleOAuthClientId]
+          GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientSecret, !Ref GoogleOAuthClientSecret]
           GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
           GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarEncryptionKeyBase64
           GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarPreviousEncryptionKeyBase64

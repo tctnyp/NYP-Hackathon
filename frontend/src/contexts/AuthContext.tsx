@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { cognitoAuth, decodeJWT, tokenStorage } from '../services/cognitoAuth';
+import { cognitoAuth, decodeJWT, tokenStorage, type ChallengeResponse } from '../services/cognitoAuth';
 import { AUTH_STORAGE_CHANGE_EVENT, type AuthStoragePreference } from '../services/authStorage';
 
 export interface CognitoUser {
@@ -10,10 +10,24 @@ export interface CognitoUser {
   [key: string]: any;
 }
 
+export interface NativeMfaChallenge {
+  type: 'totp' | 'email';
+  destination?: string;
+}
+
+interface PendingNativeMfaChallenge {
+  cognito: ChallengeResponse;
+  username: string;
+  storagePreference: AuthStoragePreference;
+}
+
 interface AuthContextType {
   user: CognitoUser | null;
   loading: boolean;
-  signIn: (username: string, password: string, storagePreference?: AuthStoragePreference) => Promise<void>;
+  nativeMfaChallenge: NativeMfaChallenge | null;
+  signIn: (username: string, password: string, storagePreference?: AuthStoragePreference) => Promise<NativeMfaChallenge | null>;
+  completeMfaSignIn: (code: string) => Promise<void>;
+  cancelMfaSignIn: () => void;
   signUp: (username: string, password: string, email: string) => Promise<void>;
   confirmSignUp: (username: string, code: string) => Promise<void>;
   resendConfirmationCode: (username: string) => Promise<void>;
@@ -44,6 +58,13 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<CognitoUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingNativeMfa, setPendingNativeMfa] = useState<PendingNativeMfaChallenge | null>(null);
+  const nativeMfaChallenge: NativeMfaChallenge | null = pendingNativeMfa ? {
+    type: pendingNativeMfa.cognito.ChallengeName === 'SOFTWARE_TOKEN_MFA' ? 'totp' : 'email',
+    ...(pendingNativeMfa.cognito.ChallengeParameters.CODE_DELIVERY_DESTINATION
+      ? { destination: pendingNativeMfa.cognito.ChallengeParameters.CODE_DELIVERY_DESTINATION }
+      : {}),
+  } : null;
 
   // Extract user from token
   const extractUserFromToken = (idToken: string): CognitoUser | null => {
@@ -118,19 +139,51 @@ export function AuthProvider({ children }: AuthProviderProps) {
     username: string,
     password: string,
     storagePreference: AuthStoragePreference = 'session',
-  ) => {
+  ): Promise<NativeMfaChallenge | null> => {
+    setPendingNativeMfa(null);
     const result = await cognitoAuth.signIn(username, password, storagePreference);
 
-    // Check if it's a challenge response
     if ('ChallengeName' in result) {
-      throw new Error(`Challenge required: ${result.ChallengeName}`);
+      if (!['SOFTWARE_TOKEN_MFA', 'EMAIL_OTP'].includes(result.ChallengeName)) {
+        throw new Error(`Unsupported Cognito challenge: ${result.ChallengeName}`);
+      }
+      setPendingNativeMfa({ cognito: result, username, storagePreference });
+      return {
+        type: result.ChallengeName === 'SOFTWARE_TOKEN_MFA' ? 'totp' : 'email',
+        ...(result.ChallengeParameters.CODE_DELIVERY_DESTINATION
+          ? { destination: result.ChallengeParameters.CODE_DELIVERY_DESTINATION }
+          : {}),
+      };
     }
 
     const idToken = tokenStorage.getIdToken();
-    if (idToken) {
-      setUser(extractUserFromToken(idToken));
-    }
+    if (idToken) setUser(extractUserFromToken(idToken));
+    return null;
   };
+
+  const completeMfaSignIn = async (code: string): Promise<void> => {
+    if (!/^\d{6}$/.test(code)) throw new Error('Enter the six-digit verification code.');
+    if (!pendingNativeMfa) throw new Error('This MFA challenge has expired. Sign in again.');
+    const result = await cognitoAuth.respondToMfaChallenge(
+      pendingNativeMfa.cognito,
+      pendingNativeMfa.username,
+      code,
+      pendingNativeMfa.storagePreference,
+    );
+    if ('ChallengeName' in result) {
+      if (!['SOFTWARE_TOKEN_MFA', 'EMAIL_OTP'].includes(result.ChallengeName)) {
+        setPendingNativeMfa(null);
+        throw new Error(`Unsupported Cognito challenge: ${result.ChallengeName}`);
+      }
+      setPendingNativeMfa((current) => current ? { ...current, cognito: result } : null);
+      throw new Error('Another verification code is required.');
+    }
+    setPendingNativeMfa(null);
+    const idToken = tokenStorage.getIdToken();
+    if (idToken) setUser(extractUserFromToken(idToken));
+  };
+
+  const cancelMfaSignIn = () => setPendingNativeMfa(null);
 
   const signUp = async (username: string, password: string, email: string) => {
     await cognitoAuth.signUp(username, password, email);
@@ -145,6 +198,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const signOut = async () => {
+    setPendingNativeMfa(null);
     await cognitoAuth.signOut();
     setUser(null);
   };
@@ -187,7 +241,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextType = {
     user,
     loading,
+    nativeMfaChallenge,
     signIn,
+    completeMfaSignIn,
+    cancelMfaSignIn,
     signUp,
     confirmSignUp,
     resendConfirmationCode,
