@@ -1460,3 +1460,44 @@ select:disabled {
 .android-sheet.safe-bottom {
   padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
 }
+
+
+/* Clear, theme-safe task reminder guidance */
+.notification-prompt {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #172033;
+}
+
+.notification-prompt-copy {
+  color: #1e40af;
+}
+
+.notification-prompt-dismiss {
+  color: #1d4ed8;
+}
+
+[data-theme='dark'] .notification-prompt {
+  border-color: #3b82f6;
+  background: #172b4f;
+  color: #f8fafc;
+}
+
+[data-theme='dark'] .notification-prompt-copy,
+[data-theme='dark'] .notification-prompt-dismiss {
+  color: #bfdbfe;
+}
+
+/* Tailwind utilities used by task cards and informational banners need dark equivalents. */
+[data-theme='dark'] .bg-gray-300 {
+  background-color: #475569;
+}
+
+[data-theme='dark'] .border-blue-200 {
+  border-color: #3b82f6;
+}
+
+[data-theme='dark'] .text-blue-900,
+[data-theme='dark'] .text-blue-950 {
+  color: #dbeafe;
+}

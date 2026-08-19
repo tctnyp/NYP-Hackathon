@@ -23,10 +23,10 @@ function taskRank(task: Task) {
 function deadlineText(task: Task) {
   const deadline = new Date(task.deadline);
   const difference = deadline.getTime() - Date.now();
-  if (difference < 0) return 'Overdue — make a small step now.';
+  if (difference < 0) return 'Overdue — take one small step now.';
   const hours = Math.ceil(difference / 3_600_000);
   if (hours <= 1) return 'Due within the hour.';
-  if (hours <= 6) return `Due in about ${hours}h.`;
+  if (hours <= 6) return `Due in about ${hours} hours.`;
   if (hours <= 24) return 'Due today.';
   if (hours <= 48) return 'Due tomorrow.';
   return `Due ${deadline.toLocaleDateString([], { month: 'short', day: 'numeric' })}.`;
