@@ -19,14 +19,20 @@ const MEDIA = {
   'image/tiff': { extensions: ['tif', 'tiff'], magic: (b) => b.length >= 4 && ((b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2a && b[3] === 0x00) || (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0x00 && b[3] === 0x2a)) },
 };
 const LABELS = {
-  title: ['title', 'task title', 'assignment title', 'assessment title', 'name'],
-  description: ['description', 'details', 'instructions', 'task description'],
-  task_type: ['task type', 'assessment type', 'type'],
-  deadline_local: ['deadline', 'due date', 'deadline date', 'submission date', 'due'],
-  estimated_hours: ['estimated hours', 'hours', 'estimated time', 'duration'],
-  grade_weight: ['grade weight', 'weightage', 'weight', 'percentage'],
-  is_group_work: ['group work', 'group assignment', 'team assignment', 'individual or group'],
-  module_hint: ['module', 'module code', 'course', 'course code', 'subject'],
+  title: ['title', 'task title', 'assignment title', 'assessment title', 'project title', 'brief title', 'assignment', 'assessment name', 'name'],
+  description: ['description', 'details', 'instructions', 'task description', 'assignment brief', 'overview', 'objective', 'requirements'],
+  task_type: ['task type', 'assessment type', 'assignment type', 'type', 'deliverable'],
+  deadline_local: ['deadline', 'due date', 'deadline date', 'submission date', 'submission deadline', 'submit by', 'due'],
+  estimated_hours: ['estimated hours', 'hours', 'estimated time', 'expected time', 'duration', 'workload'],
+  grade_weight: ['grade weight', 'weightage', 'weight', 'percentage', 'marks', 'total marks'],
+  is_group_work: ['group work', 'group assignment', 'team assignment', 'team project', 'individual or group', 'work mode'],
+  module_hint: ['module', 'module code', 'course', 'course code', 'subject', 'unit', 'unit code'],
+};
+const MONTHS = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
+  dec: 12, december: 12,
 };
 
 function apiError(message, statusCode) {
@@ -83,20 +89,56 @@ function keyValuePairs(blocks, byId) {
 }
 
 function candidate(field, pairs, lines) {
-  const aliases = LABELS[field];
-  const pair = pairs.find((item) => aliases.includes(item.label));
+  const aliases = [...LABELS[field]].sort((left, right) => right.length - left.length);
+  const pair = pairs.find((item) => aliases.some((alias) => (
+    item.label === alias
+    || (alias !== 'name' && (item.label.startsWith(`${alias} `) || item.label.endsWith(` ${alias}`)))
+  )));
   if (pair) return pair;
+
   for (const line of lines) {
     const normalized = canonicalLabel(line.text);
     for (const alias of aliases) {
-      const prefix = `${alias} `;
-      if (normalized.startsWith(prefix)) {
-        const raw = line.text.replace(new RegExp(`^\\s*${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[:\\-]?\\s*`, 'i'), '').trim();
+      if (normalized.startsWith(`${alias} `)) {
+        const raw = line.text.replace(new RegExp(`^\\s*${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[:\\-–—]?\\s*`, 'i'), '').trim();
         if (raw) return { value: raw.slice(0, MAX_TEXT), confidence: line.confidence };
       }
     }
   }
-  return null;
+
+  return inferredCandidate(field, lines);
+}
+
+function inferredCandidate(field, lines) {
+  const findLine = (pattern) => lines.find((line) => pattern.test(line.text));
+  let line;
+  if (field === 'deadline_local') {
+    line = findLine(/\b(due|deadline|submit|submission)\b.*(?:\d{1,2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
+  } else if (field === 'module_hint') {
+    line = findLine(/\b[A-Z]{2,8}[\s-]?\d{3,5}[A-Z]?\b/i);
+    if (line) {
+      const code = line.text.match(/\b[A-Z]{2,8}[\s-]?\d{3,5}[A-Z]?\b/i)?.[0];
+      if (code) return { value: code, confidence: Math.min(Number(line.confidence) || 0, 80) };
+    }
+  } else if (field === 'task_type') {
+    line = findLine(/\b(group|team|individual)\s+(assignment|project|presentation|report)\b/i)
+      || findLine(/\b(assignment|quiz|test|exam|project|presentation|report|competition)\b/i);
+  } else if (field === 'estimated_hours') {
+    line = findLine(/\b\d+(?:\.\d+)?\s*(?:hours?|hrs?)\b/i);
+  } else if (field === 'grade_weight') {
+    line = findLine(/\b(?:weight(?:age)?|marks?|grade|worth)\b.*\d+(?:\.\d+)?\s*%?/i);
+  } else if (field === 'is_group_work') {
+    line = findLine(/\b(group|team|individual)\s+(?:work|assignment|project|assessment)\b/i);
+  } else if (field === 'title') {
+    line = lines.find((item) => {
+      const text = item.text.trim();
+      const words = text.split(/\s+/);
+      return text.length >= 4 && text.length <= 200 && words.length <= 24
+        && !/^(page\s+\d+|module|course|subject|due|deadline|submission|weight|marks?|student|name\s*:)/i.test(text)
+        && !/^\d+$/.test(text);
+    });
+  }
+  return line ? { value: line.text.trim().slice(0, MAX_TEXT), confidence: Math.min(Number(line.confidence) || 0, 80) } : null;
 }
 
 function suggestion(value, confidence) {
@@ -111,24 +153,36 @@ function validDate(year, month, day) {
 function normalizeDeadline(raw, locale, warnings) {
   const text = raw.trim().replace(/\s+/g, ' ');
   let year; let month; let day; let time = '';
-  let match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}):(\d{2})(?:\s*(am|pm))?)?$/i);
+  let match = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b(?:[T,\s]+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i);
   if (match) {
-    [, year, month, day] = match.map((v, i) => i > 0 && i < 4 ? Number(v) : v);
-    if (match[4]) time = normalizeTime(Number(match[4]), Number(match[5]), match[6]);
+    year = Number(match[1]); month = Number(match[2]); day = Number(match[3]);
+    if (match[4]) time = normalizeTime(Number(match[4]), Number(match[5] || 0), match[6]);
   } else {
-    match = text.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?)?$/i);
-    if (!match) return null;
-    const first = Number(match[1]); const second = Number(match[2]); year = Number(match[3]);
-    const localeLower = locale.toLowerCase();
-    const monthFirst = /^en-us\b/.test(localeLower);
-    const dayFirst = /^(en-(sg|gb|au|nz)|ms|zh-sg)\b/.test(localeLower);
-    if (first <= 12 && second <= 12 && first !== second && !monthFirst && !dayFirst) {
-      warnings.push('deadline_ambiguous_numeric_date');
-      return null;
+    match = text.match(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})\b(?:[,\s]+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i);
+    if (match) {
+      const first = Number(match[1]); const second = Number(match[2]); year = Number(match[3]);
+      const localeLower = locale.toLowerCase();
+      const monthFirst = /^en-us\b/.test(localeLower);
+      const dayFirst = /^(en-(sg|gb|au|nz)|ms|zh-sg)\b/.test(localeLower);
+      if (first <= 12 && second <= 12 && first !== second && !monthFirst && !dayFirst) {
+        warnings.push('deadline_ambiguous_numeric_date');
+        return null;
+      }
+      if (monthFirst) { month = first; day = second; } else { day = first; month = second; }
+      if (!monthFirst && !dayFirst && first <= 12 && second > 12) { month = first; day = second; }
+      if (match[4]) time = normalizeTime(Number(match[4]), Number(match[5] || 0), match[6]);
+    } else {
+      match = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})[,]?\s+(\d{4})\b(?:[,\s]+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i);
+      if (match) {
+        day = Number(match[1]); month = MONTHS[match[2].toLowerCase()]; year = Number(match[3]);
+      } else {
+        match = text.match(/\b([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{4})\b(?:[,\s]+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?/i);
+        if (!match) return null;
+        month = MONTHS[match[1].toLowerCase()]; day = Number(match[2]); year = Number(match[3]);
+      }
+      if (!month) return null;
+      if (match[4]) time = normalizeTime(Number(match[4]), Number(match[5] || 0), match[6]);
     }
-    if (monthFirst) { month = first; day = second; } else { day = first; month = second; }
-    if (!monthFirst && !dayFirst && first <= 12 && second > 12) { month = first; day = second; }
-    if (match[4]) time = normalizeTime(Number(match[4]), Number(match[5]), match[6]);
   }
   if (!validDate(Number(year), Number(month), Number(day)) || time === null) return null;
   if (!time) {

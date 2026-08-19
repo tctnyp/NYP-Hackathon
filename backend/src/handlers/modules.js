@@ -208,17 +208,22 @@ exports.deleteModule = async (event) => {
       return error('Module not found', 404);
     }
 
-    // Delete module
+    const linkedTasks = await queryItems({
+      IndexName: 'GSI2-TasksByModule',
+      KeyConditionExpression: 'GSI2PK = :pk',
+      ExpressionAttributeValues: {
+        ':pk': `USER#${userId}#MODULE#${moduleId}`,
+      },
+      Limit: 1,
+    });
+    if (linkedTasks.length > 0) {
+      return error('Delete or move this module’s tasks before deleting the module', 409);
+    }
+
     await deleteItem(TASKS_TABLE, {
       PK: `USER#${userId}`,
       SK: `MODULE#${moduleId}`,
     });
-
-    // Note: Tasks with this module_id will still exist but with orphaned module_id
-    // In production, you might want to either:
-    // 1. Prevent deletion if tasks exist
-    // 2. Update all tasks to set module_id = null
-    // 3. Delete all tasks with this module
 
     return success({ message: 'Module deleted successfully' });
   } catch (err) {

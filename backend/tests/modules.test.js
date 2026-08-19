@@ -1,14 +1,16 @@
 const mockQueryItems = jest.fn();
 const mockPutItem = jest.fn();
+const mockGetItem = jest.fn();
+const mockDeleteItem = jest.fn();
 
 jest.mock('../src/utils/database', () => ({
   TASKS_TABLE: 'tasks-test',
   generateId: () => 'module-123',
   timestamp: () => '2026-08-18T15:00:00.000Z',
-  getItem: jest.fn(),
+  getItem: mockGetItem,
   putItem: mockPutItem,
   updateItem: jest.fn(),
-  deleteItem: jest.fn(),
+  deleteItem: mockDeleteItem,
   queryItems: mockQueryItems,
 }));
 
@@ -80,5 +82,41 @@ describe('module creation', () => {
     expect(response.statusCode).toBe(400);
     expect(mockQueryItems).not.toHaveBeenCalled();
     expect(mockPutItem).not.toHaveBeenCalled();
+  });
+});
+
+describe('module deletion', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetItem.mockResolvedValue({ module_id: 'module-123', module_code: 'CS101' });
+    mockQueryItems.mockResolvedValue([]);
+    mockDeleteItem.mockResolvedValue(undefined);
+  });
+
+  test('blocks deletion while tasks still reference the module', async () => {
+    mockQueryItems.mockResolvedValue([{ task_id: 'task-1' }]);
+    const response = await modules.deleteModule({ ...event(undefined), pathParameters: { moduleId: 'module-123' } });
+
+    expect(response.statusCode).toBe(409);
+    expect(bodyOf(response).error).toMatch(/delete or move/i);
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+  });
+
+  test('deletes an empty module after verifying ownership', async () => {
+    const response = await modules.deleteModule({ ...event(undefined), pathParameters: { moduleId: 'module-123' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockGetItem).toHaveBeenCalledWith('tasks-test', {
+      PK: 'USER#user-123',
+      SK: 'MODULE#module-123',
+    });
+    expect(mockQueryItems).toHaveBeenCalledWith(expect.objectContaining({
+      IndexName: 'GSI2-TasksByModule',
+      Limit: 1,
+    }));
+    expect(mockDeleteItem).toHaveBeenCalledWith('tasks-test', {
+      PK: 'USER#user-123',
+      SK: 'MODULE#module-123',
+    });
   });
 });

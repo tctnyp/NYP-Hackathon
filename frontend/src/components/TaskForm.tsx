@@ -113,6 +113,14 @@ function formatConfidence(confidence: number) {
   return `${Math.round(boundedConfidence)}% confidence`;
 }
 
+function extractionErrorMessage(cause: unknown) {
+  if (typeof cause === 'object' && cause !== null && 'response' in cause) {
+    const response = (cause as { response?: { data?: { error?: string } } }).response;
+    if (response?.data?.error) return response.data.error;
+  }
+  return 'Unable to extract suggestions. Choose the file again and retry.';
+}
+
 function TaskForm({ task, modules, modulesError, submitting, error, onClose, onSubmit }: TaskFormProps) {
   const [form, setForm] = useState<FormState>({
     title: task?.title || '',
@@ -202,9 +210,9 @@ function TaskForm({ task, modules, modulesError, submitting, error, onClose, onS
       objectKey = null;
       setExtraction(response.data.data);
       setExtractionStatus('Suggestions are ready for review. The temporary S3 file has been deleted.');
-    } catch {
+    } catch (cause) {
       if (objectKey) void discardTemporaryMedia(objectKey, 'assignment_import').catch(() => {});
-      setExtractionError('Unable to extract suggestions. Choose the file again and retry.');
+      setExtractionError(extractionErrorMessage(cause));
       setExtractionStatus('');
     } finally {
       setExtracting(false);

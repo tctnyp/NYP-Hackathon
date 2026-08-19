@@ -129,7 +129,7 @@ Enable the Google Calendar API for that Google Cloud project. Supply these prote
 
 - `EnableGoogleCalendarSync=true`
 - `GoogleCalendarOAuthClientId` and `GoogleCalendarOAuthClientSecret` — optional dedicated Calendar-client overrides; when both are empty, the backend reuses `GoogleOAuthClientId` and `GoogleOAuthClientSecret`
-- `GoogleCalendarOAuthRedirectUri`
+- `GoogleOAuthRedirectUri` — the single canonical `${FrontendUrl}/account/settings` callback shared by Google account linking and Calendar consent
 - `GoogleCalendarEncryptionKeyBase64` — exactly 32 cryptographically random bytes encoded as canonical base64
 - `GoogleCalendarPreviousEncryptionKeyBase64` — normally empty; during rotation retain the former key here until all credentials are reauthorized or migrated
 - `GoogleCalendarRevokeOnDisable` — keep `false` when the Google project is also used for sign-in; set `true` only for a dedicated Calendar project because Google revocation can remove project-wide grants
@@ -145,14 +145,14 @@ The frontend defaults to a session-only Cognito login. An explicit cookie-style 
 - `session` keeps one namespaced Cognito token bundle in `sessionStorage`; closing the browser session removes it.
 - `persistent` keeps that bundle in `localStorage`, allowing Cognito refresh-token restoration after a browser restart.
 - Changing the preference migrates the complete token bundle and removes the copy in the other store. Sign-out clears both stores and legacy token keys.
-- OAuth state, PKCE verifier, return path, and the per-flow storage choice remain namespaced in `sessionStorage` and are never made persistent.
+- OAuth state, PKCE verifier, return path, per-flow storage choice, and a 10-minute expiry are mirrored to same-origin session/local storage only for the active redirect handoff. Both copies are one-time consumed on callback (or cleared when expired); authentication tokens still follow the user’s separate persistence choice.
 - No advertising or tracking cookies are introduced. This SPA storage is not equivalent to an `HttpOnly` session cookie; any same-origin JavaScript can read `localStorage`, so persistent login should not be enabled on shared devices and XSS controls remain essential.
 
 The preference is available again in Account Settings. If persistent browser storage is blocked or full, the client falls back to session-only behavior rather than duplicating or losing a valid session.
 
 
 
-This AWS Academy stack uses the externally supplied `LabRoleArn`. Before every deployment, validate its documented DynamoDB, stream, SQS, Cognito, S3 object, Textract, SES, and CloudWatch Logs contract without printing secrets. In addition to the Calendar permissions checked by the script, account linking requires `cognito-idp:AdminLinkProviderForUser` and `cognito-idp:AdminDisableProviderForUser`; private media handling requires `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, and `s3:DeleteObject` on the stack's media-bucket objects. The template bucket policy grants only these object operations to `LabRoleArn`, denies insecure transport, and blocks all public access.
+This AWS Academy stack uses the externally supplied `LabRoleArn`. Before every deployment, validate its documented DynamoDB, stream, SQS, Cognito, S3 object, Textract, SES, and CloudWatch Logs contract without printing secrets. In addition to the Calendar permissions checked by the script, account linking requires `cognito-idp:AdminLinkProviderForUser` and `cognito-idp:AdminDisableProviderForUser`; account deletion requires `cognito-idp:AdminDeleteUser`; private media handling requires `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, and `s3:DeleteObject` on the stack's media-bucket objects. The template bucket policy grants only these object operations to `LabRoleArn`, denies insecure transport, and blocks all public access.
 
 ```powershell
 .\backend\scripts\validate-calendar-role.ps1 -RoleArn <lab-role-arn> -AccountId <account-id> -Region us-east-1 -Environment prod

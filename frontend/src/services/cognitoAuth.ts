@@ -17,12 +17,43 @@ const OAUTH_CODE_VERIFIER_KEY = 'nyp.auth.oauth.code-verifier.v1';
 const OAUTH_STATE_KEY = 'nyp.auth.oauth.state.v1';
 const OAUTH_RETURN_TO_KEY = 'nyp.auth.oauth.return-to.v1';
 const OAUTH_STORAGE_PREFERENCE_KEY = 'nyp.auth.oauth.persistence.v1';
+const OAUTH_EXPIRES_AT_KEY = 'nyp.auth.oauth.expires-at.v1';
+const OAUTH_TRANSACTION_TTL_MS = 10 * 60 * 1000;
+
+function oauthStores(): Storage[] {
+  return [window.sessionStorage, window.localStorage];
+}
+
+function readOAuthValue(key: string): string | null {
+  for (const storage of oauthStores()) {
+    try {
+      const value = storage.getItem(key);
+      if (value !== null) return value;
+    } catch { /* Try the other same-origin store. */ }
+  }
+  return null;
+}
+
+function writeOAuthValue(key: string, value: string) {
+  let stored = false;
+  for (const storage of oauthStores()) {
+    try { storage.setItem(key, value); stored = true; } catch { /* One working store is sufficient. */ }
+  }
+  if (!stored) throw new Error('This browser could not retain the sign-in transaction.');
+}
+
+function removeOAuthValue(key: string) {
+  for (const storage of oauthStores()) {
+    try { storage.removeItem(key); } catch { /* Best-effort one-time cleanup. */ }
+  }
+}
 
 function clearOAuthTransactionStorage(includeReturnPath = true) {
-  sessionStorage.removeItem(OAUTH_CODE_VERIFIER_KEY);
-  sessionStorage.removeItem(OAUTH_STATE_KEY);
-  sessionStorage.removeItem(OAUTH_STORAGE_PREFERENCE_KEY);
-  if (includeReturnPath) sessionStorage.removeItem(OAUTH_RETURN_TO_KEY);
+  removeOAuthValue(OAUTH_CODE_VERIFIER_KEY);
+  removeOAuthValue(OAUTH_STATE_KEY);
+  removeOAuthValue(OAUTH_STORAGE_PREFERENCE_KEY);
+  removeOAuthValue(OAUTH_EXPIRES_AT_KEY);
+  if (includeReturnPath) removeOAuthValue(OAUTH_RETURN_TO_KEY);
 }
 
 type CognitoTokens = AuthTokens;
@@ -388,10 +419,11 @@ export const cognitoAuth = {
     const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//')
       ? returnTo
       : '/dashboard';
-    sessionStorage.setItem(OAUTH_CODE_VERIFIER_KEY, codeVerifier);
-    sessionStorage.setItem(OAUTH_STATE_KEY, state);
-    sessionStorage.setItem(OAUTH_RETURN_TO_KEY, safeReturnTo);
-    sessionStorage.setItem(OAUTH_STORAGE_PREFERENCE_KEY, tokenStorage.getPreference() || 'session');
+    writeOAuthValue(OAUTH_CODE_VERIFIER_KEY, codeVerifier);
+    writeOAuthValue(OAUTH_STATE_KEY, state);
+    writeOAuthValue(OAUTH_RETURN_TO_KEY, safeReturnTo);
+    writeOAuthValue(OAUTH_STORAGE_PREFERENCE_KEY, tokenStorage.getPreference() || 'session');
+    writeOAuthValue(OAUTH_EXPIRES_AT_KEY, String(Date.now() + OAUTH_TRANSACTION_TTL_MS));
 
     // Normalize values so an optional protocol/trailing slash does not break OAuth.
     const normalizedDomain = cognitoDomain.replace(/^https?:\/\//i, '').replace(/\/$/, '');
@@ -417,8 +449,8 @@ export const cognitoAuth = {
   },
 
   consumeOAuthReturnTo(): string {
-    const returnTo = sessionStorage.getItem(OAUTH_RETURN_TO_KEY);
-    sessionStorage.removeItem(OAUTH_RETURN_TO_KEY);
+    const returnTo = readOAuthValue(OAUTH_RETURN_TO_KEY);
+    removeOAuthValue(OAUTH_RETURN_TO_KEY);
 
     return returnTo?.startsWith('/') && !returnTo.startsWith('//')
       ? returnTo
@@ -426,25 +458,25 @@ export const cognitoAuth = {
   },
 
   async handleOAuthCallback(code: string, state: string): Promise<CognitoTokens> {
-    const storedState = sessionStorage.getItem(OAUTH_STATE_KEY);
-    const codeVerifier = sessionStorage.getItem(OAUTH_CODE_VERIFIER_KEY);
-    const storedPreference = sessionStorage.getItem(OAUTH_STORAGE_PREFERENCE_KEY);
+    const storedState = readOAuthValue(OAUTH_STATE_KEY);
+    const codeVerifier = readOAuthValue(OAUTH_CODE_VERIFIER_KEY);
+    const storedPreference = readOAuthValue(OAUTH_STORAGE_PREFERENCE_KEY);
+    const expiresAt = Number(readOAuthValue(OAUTH_EXPIRES_AT_KEY));
     const storagePreference: AuthStoragePreference = storedPreference === 'persistent'
       ? 'persistent'
       : 'session';
 
-    if (!storedState || storedState !== state) {
-      throw new Error('Invalid state parameter');
+    if (!storedState || storedState !== state || !Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+      clearOAuthTransactionStorage();
+      throw new Error('This sign-in request is invalid or expired. Start again from the sign-in page.');
     }
 
     if (!codeVerifier) {
-      throw new Error('No code verifier found');
+      clearOAuthTransactionStorage();
+      throw new Error('This sign-in request is incomplete. Start again from the sign-in page.');
     }
 
-    // Clean up
-    sessionStorage.removeItem(OAUTH_STATE_KEY);
-    sessionStorage.removeItem(OAUTH_CODE_VERIFIER_KEY);
-    sessionStorage.removeItem(OAUTH_STORAGE_PREFERENCE_KEY);
+    clearOAuthTransactionStorage(false);
 
     const cognitoDomain = import.meta.env.VITE_COGNITO_DOMAIN;
     // Normalize domain - remove https:// prefix if present

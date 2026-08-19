@@ -58,6 +58,7 @@ interface AccountContextValue extends AccountData {
   completeOAuth: (code: string, state: string) => Promise<void>;
   cancelOAuth: (state: string) => Promise<void>;
   disconnect: (provider: ConnectionProvider) => Promise<void>;
+  deleteAccount: (confirmation: string) => Promise<void>;
   enableCalendarSync: () => Promise<void>;
   syncCalendarNow: () => Promise<void>;
   disableCalendarSync: () => Promise<void>;
@@ -320,6 +321,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     }
   }, [applyAccountData, refreshAccount, refreshSession]);
 
+  const deleteAccount = useCallback(async (confirmation: string) => {
+    setError('');
+    try {
+      await accountApi.delete(confirmation);
+    } catch (requestError) {
+      throw new Error(errorMessage(requestError));
+    }
+  }, []);
+
   const isConnected = useCallback((provider: ConnectionProvider) => {
     if (hasProviderIdentity(user, provider)) return true;
     const connection = connections[provider];
@@ -341,11 +351,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     completeOAuth,
     cancelOAuth,
     disconnect,
+    deleteAccount,
     enableCalendarSync,
     syncCalendarNow,
     disableCalendarSync,
     isConnected,
-  }), [calendarSync, cancelOAuth, completeOAuth, completeOnboarding, connect, connections, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, nativeMfa, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
+  }), [calendarSync, cancelOAuth, completeOAuth, completeOnboarding, connect, connections, deleteAccount, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, nativeMfa, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 }

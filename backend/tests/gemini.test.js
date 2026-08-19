@@ -23,6 +23,15 @@ describe('Gemini service', () => {
     })).toEqual(['first', 'third']);
   });
 
+  test('reads conventional key aliases before numbered fallbacks and ignores placeholders', () => {
+    expect(configuredApiKeys({
+      GEMINI_API_KEY: ' primary ',
+      GOOGLE_API_KEY: 'primary',
+      GEMINI_API_KEY_1: 'replace-with-primary-key',
+      GEMINI_API_KEY_2: 'second',
+    })).toEqual(['primary', 'second']);
+  });
+
   test('uses the first key when it succeeds', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(response(200, {
       candidates: [{ content: { parts: [{ text: 'A focused plan' }] } }],

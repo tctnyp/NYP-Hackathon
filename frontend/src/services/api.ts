@@ -213,6 +213,9 @@ export const accountApi = {
   disconnect: (provider: 'google' | 'discord') => (
     apiClient.put<AccountApiResponse>('/account', { action: 'disconnect', provider })
   ),
+  delete: (confirmation: string) => (
+    apiClient.delete<{ data: { message: string } }>('/account', { data: { confirmation } })
+  ),
 };
 
 
@@ -248,19 +251,22 @@ export const googleCalendarApi = {
   disable: () => apiClient.put<CalendarApiResponse>('/calendar/google', { action: 'disable' }),
 };
 
+export type SmartAiTool = 'prioritize' | 'today_plan' | 'deadline_risks';
+
 export interface SmartAssistantRequest {
-  prompt: string;
+  tool: SmartAiTool;
   include_context: boolean;
 }
 
 export interface SmartAssistantData {
   reply: string;
   model: string;
+  tool: SmartAiTool;
   context_used: boolean;
 }
 
 export const smartAssistantApi = {
-  ask: (data: SmartAssistantRequest) => (
+  run: (data: SmartAssistantRequest) => (
     apiClient.post<{ data: SmartAssistantData }>('/smart-assistant', data, { timeout: 35_000 })
   ),
 };

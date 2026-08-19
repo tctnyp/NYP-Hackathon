@@ -1464,28 +1464,46 @@ select:disabled {
 
 /* Clear, theme-safe task reminder guidance */
 .notification-prompt {
-  border-color: #bfdbfe;
+  border-color: #93c5fd;
   background: #eff6ff;
-  color: #172033;
+  color: #0f172a;
 }
 
+.notification-prompt-title,
 .notification-prompt-copy {
-  color: #1e40af;
+  color: #0f172a !important;
 }
 
 .notification-prompt-dismiss {
-  color: #1d4ed8;
+  color: #1e3a8a !important;
+  background: #dbeafe;
+}
+
+.task-reminder-settings {
+  background: var(--app-surface-raised);
+  color: var(--app-text);
+}
+
+.task-reminder-settings #notifications-heading,
+.task-reminder-settings .reminder-copy,
+.task-reminder-settings .reminder-status {
+  color: var(--app-text) !important;
 }
 
 [data-theme='dark'] .notification-prompt {
-  border-color: #3b82f6;
+  border-color: #60a5fa;
   background: #172b4f;
   color: #f8fafc;
 }
 
-[data-theme='dark'] .notification-prompt-copy,
+[data-theme='dark'] .notification-prompt-title,
+[data-theme='dark'] .notification-prompt-copy {
+  color: #f8fafc !important;
+}
+
 [data-theme='dark'] .notification-prompt-dismiss {
-  color: #bfdbfe;
+  color: #dbeafe !important;
+  background: #1e3a5f;
 }
 
 /* Tailwind utilities used by task cards and informational banners need dark equivalents. */

@@ -244,6 +244,27 @@ describe('POST /task-extractions', () => {
     expectCleanup();
   });
 
+  test('infers suggestions from an unstructured assignment brief and written deadline', async () => {
+    mockTextractSend.mockResolvedValue(responseBlocks([
+      { Id: 'l1', BlockType: 'LINE', Text: 'Cloud Architecture Risk Report', Confidence: 94 },
+      { Id: 'l2', BlockType: 'LINE', Text: 'ICT2104 Enterprise Cloud Computing', Confidence: 92 },
+      { Id: 'l3', BlockType: 'LINE', Text: 'Submission deadline: Friday, 21 August 2026, 11:59 PM', Confidence: 91 },
+      { Id: 'l4', BlockType: 'LINE', Text: 'This group assignment is worth 30%', Confidence: 89 },
+      { Id: 'l5', BlockType: 'LINE', Text: 'Expected workload: 8 hours', Confidence: 88 },
+    ]));
+
+    const data = body(await extraction.handler(event({ locale: 'en-SG' }))).data;
+
+    expect(data.fields.title).toEqual({ value: 'Cloud Architecture Risk Report', confidence: 80 });
+    expect(data.fields.module_hint).toEqual({ value: 'ICT2104', confidence: 80 });
+    expect(data.fields.deadline_local).toEqual({ value: '2026-08-21T23:59', confidence: 91 });
+    expect(data.fields.task_type.value).toBe('assignment');
+    expect(data.fields.estimated_hours.value).toBe(8);
+    expect(data.fields.grade_weight.value).toBe(30);
+    expect(data.fields.is_group_work.value).toBe(true);
+    expectCleanup();
+  });
+
   test('rejects ambiguous numeric dates unless locale resolves order', () => {
     const warnings = [];
     expect(extraction._test.normalizeDeadline('03/04/2027', '', warnings)).toBeNull();

@@ -7,11 +7,16 @@ Parameters:
     Type: String
     Default: dev
     AllowedValues: [dev, staging, prod]
+  GeminiApiKey:
+    Type: String
+    MinLength: 1
+    NoEcho: true
+    Description: Required primary server-side Gemini API key (set through protected deployment parameters)
   GeminiApiKey1:
     Type: String
     Default: ''
     NoEcho: true
-    Description: Primary server-side Gemini API key
+    Description: Primary numbered Gemini API key retained for backwards-compatible deployments
   GeminiApiKey2:
     Type: String
     Default: ''
@@ -68,11 +73,6 @@ Parameters:
     Default: ''
     NoEcho: true
     Description: Optional dedicated Calendar OAuth client secret; when empty, reuse GoogleOAuthClientSecret
-  GoogleCalendarOAuthRedirectUri:
-    Type: String
-    Default: https://nypxaws.tancheetiong.com/account/settings
-    AllowedPattern: '^https://\S+/account/settings$|^http://localhost(:[0-9]+)?/account/settings$'
-    Description: Authenticated SPA route that completes Google Calendar consent
   GoogleCalendarEncryptionKeyBase64:
     Type: String
     Default: ''
@@ -175,7 +175,7 @@ Conditions:
   HasGoogleCalendarSync: !And
     - !Equals [!Ref EnableGoogleCalendarSync, 'true']
     - !Condition HasGoogleCalendarOAuth
-    - !Not [!Equals [!Ref GoogleCalendarOAuthRedirectUri, '']]
+    - !Not [!Equals [!Ref GoogleOAuthRedirectUri, '']]
     - !Not [!Equals [!Ref GoogleCalendarEncryptionKeyBase64, '']]
   HasDiscordBridgeConfiguration: !And
     - !Not [!Equals [!Ref DiscordOAuthClientId, '']]
@@ -850,6 +850,7 @@ Resources:
       Timeout: 29
       Environment:
         Variables:
+          GEMINI_API_KEY: !Ref GeminiApiKey
           GEMINI_API_KEY_1: !Ref GeminiApiKey1
           GEMINI_API_KEY_2: !Ref GeminiApiKey2
           GEMINI_API_KEY_3: !Ref GeminiApiKey3
@@ -892,7 +893,7 @@ Resources:
         Variables:
           GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
           GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientId, !Ref GoogleOAuthClientId]
-          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
+          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleOAuthRedirectUri
       Events:
         ApiEvent:
           Type: Api
@@ -909,7 +910,7 @@ Resources:
           GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
           GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientId, !Ref GoogleOAuthClientId]
           GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientSecret, !Ref GoogleOAuthClientSecret]
-          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
+          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleOAuthRedirectUri
           GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarEncryptionKeyBase64
           GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarPreviousEncryptionKeyBase64
           GOOGLE_CALENDAR_REVOKE_ON_DISABLE: !Ref GoogleCalendarRevokeOnDisable
@@ -936,7 +937,7 @@ Resources:
           GOOGLE_CALENDAR_SYNC_ENABLED: !If [HasGoogleCalendarSync, 'true', 'false']
           GOOGLE_CALENDAR_OAUTH_CLIENT_ID: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientId, !Ref GoogleOAuthClientId]
           GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET: !If [HasDedicatedGoogleCalendarOAuth, !Ref GoogleCalendarOAuthClientSecret, !Ref GoogleOAuthClientSecret]
-          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleCalendarOAuthRedirectUri
+          GOOGLE_CALENDAR_OAUTH_REDIRECT_URI: !Ref GoogleOAuthRedirectUri
           GOOGLE_CALENDAR_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarEncryptionKeyBase64
           GOOGLE_CALENDAR_PREVIOUS_ENCRYPTION_KEY_BASE64: !Ref GoogleCalendarPreviousEncryptionKeyBase64
           GOOGLE_CALENDAR_REVOKE_ON_DISABLE: !Ref GoogleCalendarRevokeOnDisable
@@ -1071,6 +1072,19 @@ Resources:
         ApiEvent:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: PUT }
+
+  DeleteAccountFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/account.deleteAccount
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: /account, Method: DELETE }
 
   InstitutionCatalogFunction:
     Type: AWS::Serverless::Function

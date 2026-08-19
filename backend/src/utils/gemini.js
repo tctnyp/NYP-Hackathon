@@ -13,9 +13,16 @@ class GeminiServiceError extends Error {
 }
 
 function configuredApiKeys(env = process.env) {
-  return [env.GEMINI_API_KEY_1, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3]
-    .map((key) => key?.trim())
-    .filter(Boolean);
+  const placeholders = /^(replace-with-|your-|changeme$)/i;
+  return [...new Set([
+    env.GEMINI_API_KEY,
+    env.GOOGLE_API_KEY,
+    env.GEMINI_API_KEY_1,
+    env.GEMINI_API_KEY_2,
+    env.GEMINI_API_KEY_3,
+  ]
+    .map((key) => typeof key === 'string' ? key.trim() : '')
+    .filter((key) => key && !placeholders.test(key)))];
 }
 
 function isRateLimited(response, body) {

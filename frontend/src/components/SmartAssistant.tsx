@@ -1,133 +1,136 @@
-import { FormEvent, useState } from 'react';
-import { AlertCircle, BrainCircuit, LoaderCircle, Send, ShieldCheck, Sparkles } from 'lucide-react';
-import { smartAssistantApi } from '../services/api';
+import { useState } from 'react';
+import { AlertCircle, CalendarRange, ListChecks, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
+import { smartAssistantApi, type SmartAiTool } from '../services/api';
 
 function errorMessage(cause: unknown) {
   if (typeof cause === 'object' && cause !== null && 'response' in cause) {
     const response = (cause as { response?: { data?: { error?: string } } }).response;
     if (response?.data?.error) return response.data.error;
   }
-  return 'Smart AI is unavailable right now. Please try again.';
+  return 'This AI tool is unavailable right now. Please try again.';
 }
 
+const tools: Array<{
+  id: SmartAiTool;
+  title: string;
+  description: string;
+  action: string;
+  icon: typeof ListChecks;
+}> = [
+  {
+    id: 'prioritize',
+    title: 'Prioritize my workload',
+    description: 'Rank incomplete tasks using deadlines, progress, priority, and estimated effort.',
+    action: 'Build priority list',
+    icon: ListChecks,
+  },
+  {
+    id: 'today_plan',
+    title: 'Plan my study day',
+    description: 'Create a realistic sequence of focused work blocks for the most important tasks.',
+    action: 'Create today plan',
+    icon: CalendarRange,
+  },
+  {
+    id: 'deadline_risks',
+    title: 'Check deadline risks',
+    description: 'Identify tasks that may slip and suggest the smallest useful next action for each.',
+    action: 'Review risks',
+    icon: TriangleAlert,
+  },
+];
+
 export default function SmartAssistant() {
-  const [prompt, setPrompt] = useState('');
+  const [activeTool, setActiveTool] = useState<SmartAiTool | null>(null);
   const [reply, setReply] = useState('');
   const [includeContext, setIncludeContext] = useState(true);
-  const [loading, setLoading] = useState(false);
   const [requestError, setRequestError] = useState('');
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const question = prompt.trim();
-    if (!question || loading) return;
-
-    setLoading(true);
+  const runTool = async (tool: SmartAiTool) => {
+    if (activeTool) return;
+    setActiveTool(tool);
+    setReply('');
     setRequestError('');
     try {
-      const response = await smartAssistantApi.ask({
-        prompt: question,
-        include_context: includeContext,
-      });
+      const response = await smartAssistantApi.run({ tool, include_context: includeContext });
       setReply(response.data.data.reply);
     } catch (cause) {
       setRequestError(errorMessage(cause));
     } finally {
-      setLoading(false);
+      setActiveTool(null);
     }
   };
-
-  const suggestions = [
-    'Prioritize my current tasks and give me a realistic plan for today.',
-    'Which deadlines look risky, and what should I start first?',
-    'Create a focused study plan for my incomplete work this week.',
-  ];
 
   return (
     <div className="space-y-6">
       <header className="page-header">
         <div>
-          <p className="eyebrow"><Sparkles size={14} /> Gemini-powered planning</p>
-          <h1 className="page-title">Smart AI</h1>
-          <p className="page-subtitle">Turn your workload into a clear, achievable study plan.</p>
+          <p className="eyebrow"><Sparkles size={14} /> Gemini-powered tools</p>
+          <h1 className="page-title">Smart AI tools</h1>
+          <p className="page-subtitle">Choose a focused tool to turn your current workload into useful next steps.</p>
         </div>
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <section className="section-card space-y-5" aria-labelledby="smart-ai-prompt-heading">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-primary-600">
-              <BrainCircuit size={24} />
-            </div>
-            <div>
-              <h2 id="smart-ai-prompt-heading" className="text-lg font-semibold">What would you like to plan?</h2>
-              <p className="mt-1 text-sm leading-6 text-gray-500">Ask for prioritization, a study schedule, or help breaking down difficult work.</p>
-            </div>
+      <section className="section-card space-y-5" aria-labelledby="smart-ai-tools-heading">
+        <div>
+          <h2 id="smart-ai-tools-heading" className="text-lg font-semibold">Choose a tool</h2>
+          <p className="mt-1 text-sm leading-6 text-gray-500">These are purpose-built planning actions, not an AI chat.</p>
+        </div>
+
+        <label className="flex cursor-pointer items-start gap-3 rounded-2xl border p-4" style={{ borderColor: 'var(--app-border)' }}>
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 accent-blue-600"
+            checked={includeContext}
+            onChange={(event) => setIncludeContext(event.target.checked)}
+          />
+          <span>
+            <span className="block text-sm font-semibold">Use my incomplete task summaries</span>
+            <span className="mt-1 block text-xs leading-5 text-gray-500">Task titles, modules, deadlines, status, priority, estimates, and progress are sent to Google Gemini. Descriptions and account details are excluded.</span>
+          </span>
+        </label>
+
+        {!includeContext && (
+          <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900" role="status">
+            <AlertCircle className="mt-0.5 shrink-0" size={17} /> Enable task summaries for recommendations based on your workload.
           </div>
+        )}
 
-          <form className="space-y-4" onSubmit={submit}>
-            <div>
-              <label className="field-label" htmlFor="smart-ai-prompt">Your request</label>
-              <textarea
-                id="smart-ai-prompt"
-                className="input-field min-h-36 resize-y"
-                maxLength={2000}
-                placeholder="e.g. Help me decide what to work on after class today"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-              />
-              <p className="mt-1 text-right text-xs text-gray-400">{prompt.length}/2000</p>
-            </div>
-
-            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border p-4" style={{ borderColor: 'var(--app-border)' }}>
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4 accent-blue-600"
-                checked={includeContext}
-                onChange={(event) => setIncludeContext(event.target.checked)}
-              />
-              <span>
-                <span className="block text-sm font-semibold">Use my incomplete task summaries</span>
-                <span className="mt-1 block text-xs leading-5 text-gray-500">Task titles, modules, deadlines, status, priority, estimates, and progress will be sent to Google Gemini with this request. Descriptions and account details are excluded.</span>
-              </span>
-            </label>
-
-            {requestError && (
-              <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">
-                <AlertCircle className="mt-0.5 shrink-0" size={17} /> {requestError}
-              </div>
-            )}
-
-            <button type="submit" className="btn-primary inline-flex items-center justify-center gap-2" disabled={!prompt.trim() || loading}>
-              {loading ? <><LoaderCircle className="animate-spin" size={18} /> Thinking…</> : <><Send size={17} /> Ask Smart AI</>}
-            </button>
-          </form>
-
-          {reply && (
-            <article className="rounded-2xl bg-primary-50 p-5" aria-live="polite">
-              <div className="mb-3 flex items-center gap-2 font-semibold text-primary-800"><Sparkles size={18} /> Your plan</div>
-              <div className="whitespace-pre-wrap text-sm leading-7 text-gray-700">{reply}</div>
-            </article>
-          )}
-        </section>
-
-        <aside className="space-y-4">
-          <section className="section-card">
-            <h2 className="text-sm font-semibold">Try asking</h2>
-            <div className="mt-3 space-y-2">
-              {suggestions.map((suggestion) => (
-                <button key={suggestion} type="button" className="w-full rounded-xl border p-3 text-left text-sm leading-5 transition hover:bg-gray-50" style={{ borderColor: 'var(--app-border)' }} onClick={() => setPrompt(suggestion)}>
-                  {suggestion}
+        <div className="grid gap-4 md:grid-cols-3">
+          {tools.map((tool) => {
+            const Icon = tool.icon;
+            const loading = activeTool === tool.id;
+            return (
+              <article key={tool.id} className="flex min-h-64 flex-col rounded-2xl border p-5" style={{ borderColor: 'var(--app-border)', background: 'var(--app-surface-raised)' }}>
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-50 text-primary-600"><Icon size={23} /></div>
+                <h3 className="mt-4 font-semibold">{tool.title}</h3>
+                <p className="mt-2 flex-1 text-sm leading-6 text-gray-500">{tool.description}</p>
+                <button type="button" className="btn-primary mt-5 inline-flex items-center justify-center gap-2" disabled={Boolean(activeTool) || !includeContext} onClick={() => void runTool(tool.id)}>
+                  {loading ? <><LoaderCircle className="animate-spin" size={17} /> Working…</> : tool.action}
                 </button>
-              ))}
-            </div>
-          </section>
-          <section className="section-card flex items-start gap-3">
-            <ShieldCheck className="mt-0.5 shrink-0 text-green-600" size={20} />
-            <div><h2 className="text-sm font-semibold">You stay in control</h2><p className="mt-1 text-xs leading-5 text-gray-500">Smart AI provides suggestions only. It cannot create, edit, submit, or complete tasks.</p></div>
-          </section>
-        </aside>
-      </div>
+              </article>
+            );
+          })}
+        </div>
+
+        {requestError && (
+          <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">
+            <AlertCircle className="mt-0.5 shrink-0" size={17} /> {requestError}
+          </div>
+        )}
+
+        {reply && (
+          <article className="rounded-2xl bg-primary-50 p-5" aria-live="polite">
+            <div className="mb-3 flex items-center gap-2 font-semibold text-primary-800"><Sparkles size={18} /> Tool result</div>
+            <div className="whitespace-pre-wrap text-sm leading-7 text-gray-700">{reply}</div>
+          </article>
+        )}
+      </section>
+
+      <section className="section-card flex items-start gap-3">
+        <ShieldCheck className="mt-0.5 shrink-0 text-green-600" size={20} />
+        <div><h2 className="text-sm font-semibold">You stay in control</h2><p className="mt-1 text-xs leading-5 text-gray-500">AI tools provide suggestions only. They cannot create, edit, submit, or complete tasks.</p></div>
+      </section>
     </div>
   );
 }

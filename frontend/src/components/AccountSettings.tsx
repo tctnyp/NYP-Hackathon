@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { CalendarClock, CircleHelp, Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, RefreshCw, Save, Sun, Upload, UserRound, X } from 'lucide-react';
+import { CalendarClock, CircleHelp, Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, RefreshCw, Save, Sun, Trash2, Upload, UserRound, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionProvider, useAccount } from '../contexts/AccountContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,6 +49,7 @@ function AccountSettings() {
     completeOAuth,
     cancelOAuth,
     disconnect,
+    deleteAccount,
     calendar_sync: calendarSync,
     enableCalendarSync,
     syncCalendarNow,
@@ -78,6 +79,10 @@ function AccountSettings() {
   const [calendarBusy, setCalendarBusy] = useState<'enable' | 'sync' | 'disable' | null>(null);
   const [calendarError, setCalendarError] = useState('');
   const [calendarMessage, setCalendarMessage] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const callbackStarted = useRef(false);
 
   useEffect(() => {
@@ -289,6 +294,21 @@ function AccountSettings() {
       navigate('/login', { replace: true });
     } catch (signOutError) {
       setProfileError(messageFrom(signOutError));
+    }
+  };
+
+  const handleDeleteAccount = async (event: FormEvent) => {
+    event.preventDefault();
+    if (deleteConfirmation !== 'DELETE' || deletingAccount) return;
+    setDeletingAccount(true);
+    setDeleteError('');
+    try {
+      await deleteAccount(deleteConfirmation);
+      await signOut();
+      navigate('/login', { replace: true, state: { message: 'Your account was deleted.' } });
+    } catch (requestError) {
+      setDeleteError(messageFrom(requestError));
+      setDeletingAccount(false);
     }
   };
 
@@ -543,6 +563,43 @@ function AccountSettings() {
         </div>
         <BackgroundPicker />
       </section>
+
+      <section className="card border-red-200" aria-labelledby="delete-account-heading">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 id="delete-account-heading" className="text-lg font-semibold text-red-700">Delete account</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-600">Permanently delete your account, personal tasks, modules, enrollments, calendar connection, profile, and group memberships. Delete any groups you own first.</p>
+          </div>
+          <button type="button" className="btn-secondary shrink-0 text-red-700" onClick={() => { setDeleteDialogOpen(true); setDeleteConfirmation(''); setDeleteError(''); }}>
+            <span className="inline-flex items-center gap-2"><Trash2 size={17} /> Delete account</span>
+          </button>
+        </div>
+      </section>
+
+      {deleteDialogOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-account-dialog-title">
+          <form className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-2xl" onSubmit={handleDeleteAccount}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="delete-account-dialog-title" className="text-xl font-semibold text-red-700">Permanently delete account?</h2>
+                <p className="mt-2 text-sm leading-6 text-gray-700">This cannot be undone. Your sign-in and stored account data will be removed.</p>
+              </div>
+              <button type="button" className="icon-button" disabled={deletingAccount} onClick={() => setDeleteDialogOpen(false)} aria-label="Close delete account confirmation"><X size={19} /></button>
+            </div>
+            <label className="mt-5 block space-y-2 text-sm font-medium" htmlFor="delete-account-confirmation">
+              <span>Type <strong>DELETE</strong> to confirm</span>
+              <input id="delete-account-confirmation" className="input-field" autoComplete="off" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} />
+            </label>
+            {deleteError && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-700" role="alert">{deleteError}</p>}
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" className="btn-secondary" disabled={deletingAccount} onClick={() => setDeleteDialogOpen(false)}>Cancel</button>
+              <button type="submit" className="btn-primary bg-red-600 hover:bg-red-700" disabled={deleteConfirmation !== 'DELETE' || deletingAccount}>
+                {deletingAccount ? <span className="inline-flex items-center gap-2"><LoaderCircle className="animate-spin" size={17} /> Deleting…</span> : 'Delete permanently'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

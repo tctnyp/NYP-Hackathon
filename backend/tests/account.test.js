@@ -3,6 +3,10 @@ const { createHash } = require('node:crypto');
 const mockGetItem = jest.fn();
 const mockPutItem = jest.fn();
 const mockUpdateItem = jest.fn();
+const mockQueryTable = jest.fn();
+const mockBatchWriteTable = jest.fn();
+const mockDeleteItem = jest.fn();
+const mockTransactWrite = jest.fn();
 const mockDocumentSend = jest.fn();
 const mockCognitoSend = jest.fn();
 const mockDeleteOwnedMedia = jest.fn();
@@ -20,7 +24,14 @@ jest.mock('../src/utils/database', () => ({
   getItem: mockGetItem,
   putItem: mockPutItem,
   updateItem: mockUpdateItem,
+  queryTable: mockQueryTable,
+  batchWriteTable: mockBatchWriteTable,
+  deleteItem: mockDeleteItem,
+  transactWrite: mockTransactWrite,
+  TASKS_TABLE: 'tasks-test',
   USERS_TABLE: 'users-test',
+  GROUPS_TABLE: 'groups-test',
+  ENROLLMENTS_TABLE: 'enrollments-test',
   timestamp: () => '2026-08-18T10:00:00.000Z',
 }));
 
@@ -38,6 +49,7 @@ jest.mock('@aws-sdk/client-cognito-identity-provider', () => {
     }
   }
   return {
+    AdminDeleteUserCommand: MockCommand,
     AdminDisableProviderForUserCommand: MockCommand,
     AdminLinkProviderForUserCommand: MockCommand,
     CognitoIdentityProviderClient: jest.fn(() => ({ send: mockCognitoSend })),
@@ -102,6 +114,10 @@ describe('account handler', () => {
     process.env.NATIVE_EMAIL_MFA_ENABLED = 'false';
     mockDocumentSend.mockReset();
     mockCognitoSend.mockReset();
+    mockQueryTable.mockReset().mockResolvedValue([]);
+    mockBatchWriteTable.mockReset().mockResolvedValue(undefined);
+    mockDeleteItem.mockReset().mockResolvedValue(undefined);
+    mockTransactWrite.mockReset().mockResolvedValue(undefined);
     mockDeleteOwnedMedia.mockReset().mockResolvedValue(undefined);
     mockPromoteUpload.mockReset();
     mockSignedMediaUrl.mockReset();
@@ -915,6 +931,62 @@ describe('account handler', () => {
         }),
       }),
     }));
+  });
+  test('requires exact typed confirmation and recent authentication for account deletion', async () => {
+    let response = await account.deleteAccount(event({ confirmation: 'delete' }));
+    expect(response.statusCode).toBe(400);
+    expect(mockQueryTable).not.toHaveBeenCalled();
+
+    response = await account.deleteAccount(event(
+      { confirmation: 'DELETE' },
+      { auth_time: Math.floor(Date.now() / 1000) - 3600 },
+    ));
+    expect(response.statusCode).toBe(403);
+    expect(mockQueryTable).not.toHaveBeenCalled();
+  });
+
+  test('blocks account deletion while the user still owns a group', async () => {
+    mockQueryTable.mockResolvedValueOnce([{
+      PK: 'GROUP#group-1', SK: 'MEMBER#user-123', group_id: 'group-1',
+      entity_type: 'GROUP_MEMBER', role: 'owner', GSI1PK: 'USER#user-123',
+    }]);
+
+    const response = await account.deleteAccount(event({ confirmation: 'DELETE' }));
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body).error).toMatch(/groups you own/i);
+    expect(mockCognitoSend).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+  });
+
+  test('deletes memberships and invitations, personal data, media, profile, and Cognito identity', async () => {
+    const pictureKey = `media/${'a'.repeat(40)}/profile_photo/avatar.png`;
+    mockGetItem.mockResolvedValueOnce({ ...existingProfile, profile_picture_key: pictureKey });
+    mockQueryTable
+      .mockResolvedValueOnce([{
+        PK: 'GROUP#group-1', SK: 'MEMBER#user-123', group_id: 'group-1',
+        entity_type: 'GROUP_MEMBER', role: 'member', GSI1PK: 'USER#user-123',
+      }])
+      .mockResolvedValueOnce([{ PK: 'USER#user-123', SK: 'TASK#task-1' }])
+      .mockResolvedValueOnce([{ user_id: 'user-123', class_id: 'class-1' }]);
+
+    const response = await account.deleteAccount(event({ confirmation: 'DELETE' }));
+
+    expect(response.statusCode).toBe(200);
+    expect(mockTransactWrite).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ Delete: expect.objectContaining({ TableName: 'groups-test' }) }),
+    ]));
+    expect(mockBatchWriteTable).toHaveBeenCalledWith('tasks-test', [
+      { DeleteRequest: { Key: { PK: 'USER#user-123', SK: 'TASK#task-1' } } },
+    ]);
+    expect(mockBatchWriteTable).toHaveBeenCalledWith('enrollments-test', [
+      { DeleteRequest: { Key: { user_id: 'user-123', class_id: 'class-1' } } },
+    ]);
+    expect(mockDeleteOwnedMedia).toHaveBeenCalledWith('user-123', pictureKey, 'profile_photo', true);
+    expect(mockCognitoSend).toHaveBeenCalledWith(expect.objectContaining({
+      input: { UserPoolId: 'pool-test', Username: 'student' },
+    }));
+    expect(mockDeleteItem).toHaveBeenCalledWith('users-test', { user_id: 'user-123' });
   });
 
 });

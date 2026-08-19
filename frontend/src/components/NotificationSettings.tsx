@@ -35,11 +35,11 @@ function NotificationSettings() {
   };
 
   return (
-    <section className="card" aria-labelledby="notifications-heading">
+    <section className="card task-reminder-settings" aria-labelledby="notifications-heading">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${notificationsEnabled ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{notificationsEnabled ? <BellRing size={21} /> : <BellOff size={21} />}</span>
-          <div><h2 id="notifications-heading" className="text-lg font-semibold">Task reminders</h2><p className="mt-1 max-w-xl text-sm leading-6 text-gray-500">Get a helpful reminder about your top task when you switch to another app. For now, reminders stop if you fully close Academic Tasks.</p></div>
+          <div><h2 id="notifications-heading" className="text-lg font-semibold">Task reminders</h2><p className="reminder-copy mt-1 max-w-xl text-sm leading-6">Get a helpful reminder about your top task when you switch to another app. For now, reminders stop if you fully close Academic Tasks.</p></div>
         </div>
         {notificationsEnabled && <span className="w-fit rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">On</span>}
       </div>
@@ -66,7 +66,7 @@ function NotificationSettings() {
         ) : (
           <button type="button" className="btn-primary inline-flex items-center gap-2" disabled={busy} onClick={() => void enable()}><BellRing size={17} /> {busy ? 'Enabling…' : 'Enable notifications'}</button>
         )}
-        {message && <p className="mt-3 text-sm font-medium text-gray-600" role="status">{message}</p>}
+        {message && <p className="reminder-status mt-3 text-sm font-medium" role="status">{message}</p>}
       </div>
     </section>
   );

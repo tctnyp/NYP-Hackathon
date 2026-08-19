@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { modulesApi } from '../services/api';
-import { AlertCircle, BookOpen, Play, Plus, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, BookOpen, LoaderCircle, Play, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import type { Module } from '../types/api';
 import StudyTimer, { type FocusModuleRequest } from './StudyTimer';
 
@@ -24,6 +24,7 @@ function Modules() {
   const [formError, setFormError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<FocusModuleRequest>();
   const [form, setForm] = useState(initialForm);
 
@@ -55,6 +56,30 @@ function Modules() {
   const chooseFocusModule = (moduleId: string) => {
     setFocusRequest({ moduleId, requestId: Date.now() });
     window.requestAnimationFrame(() => document.getElementById('study-timer')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  const deleteModule = async (module: Module) => {
+    const taskCount = module.task_count || 0;
+    if (taskCount > 0) {
+      setPageError(`Delete or move the ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'} in ${module.module_code} before deleting the module.`);
+      return;
+    }
+    if (!window.confirm(`Delete “${module.module_code} — ${module.module_name}”? This cannot be undone.`)) return;
+
+    setDeletingModuleId(module.module_id);
+    setPageError('');
+    try {
+      await modulesApi.delete(module.module_id);
+      setModules((current) => current.filter((item) => item.module_id !== module.module_id));
+      setFocusRequest((current) => current?.moduleId === module.module_id ? undefined : current);
+    } catch (deleteError) {
+      const responseError = typeof deleteError === 'object' && deleteError !== null && 'response' in deleteError
+        ? (deleteError as { response?: { data?: { error?: string } } }).response?.data?.error
+        : null;
+      setPageError(responseError || 'We couldn’t delete that module. Please try again.');
+    } finally {
+      setDeletingModuleId(null);
+    }
   };
 
   const createModule = async (event: FormEvent<HTMLFormElement>) => {
@@ -133,7 +158,18 @@ function Modules() {
                   <p className="mt-1 line-clamp-2 min-h-12 text-sm leading-6 text-gray-500">{module.module_name}</p>
                   <div className="mt-5 flex items-center justify-between gap-3 border-t pt-4" style={{ borderColor: 'var(--app-border)' }}>
                     <span className="text-xs font-medium text-gray-400">{module.task_count || 0} total tasks</span>
-                    <button type="button" className="module-study-button" onClick={() => chooseFocusModule(module.module_id)}><Play size={14} fill="currentColor" /> Study</button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={deletingModuleId !== null}
+                        title={(module.task_count || 0) > 0 ? 'Delete or move this module’s tasks first' : `Delete ${module.module_code}`}
+                        onClick={() => void deleteModule(module)}
+                      >
+                        {deletingModuleId === module.module_id ? <LoaderCircle className="animate-spin" size={14} /> : <Trash2 size={14} />} Delete
+                      </button>
+                      <button type="button" className="module-study-button" disabled={deletingModuleId !== null} onClick={() => chooseFocusModule(module.module_id)}><Play size={14} fill="currentColor" /> Study</button>
+                    </div>
                   </div>
                 </article>
               ))}

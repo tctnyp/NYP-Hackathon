@@ -1,15 +1,23 @@
 const { createHash, randomBytes } = require('node:crypto');
 const {
+  AdminDeleteUserCommand,
   AdminDisableProviderForUserCommand,
   AdminLinkProviderForUserCommand,
   CognitoIdentityProviderClient,
 } = require('@aws-sdk/client-cognito-identity-provider');
 const { TransactWriteCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const {
+  batchWriteTable,
+  deleteItem,
   docClient,
   getItem,
+  queryTable,
   putItem,
+  transactWrite,
   updateItem,
+  ENROLLMENTS_TABLE,
+  GROUPS_TABLE,
+  TASKS_TABLE,
   USERS_TABLE,
   timestamp,
 } = require('../utils/database');
@@ -849,6 +857,95 @@ async function disconnect(event, body, profile) {
   const updatedProfile = await removeConnection(userId, provider);
   return success(await accountData(event, updatedProfile));
 }
+
+async function removeAccountGroupRelationships(userId) {
+  const userKey = `USER#${userId}`;
+  const relationships = await queryTable(GROUPS_TABLE, {
+    IndexName: 'GSI1-UserGroups',
+    KeyConditionExpression: 'GSI1PK = :user',
+    ExpressionAttributeValues: { ':user': userKey },
+  });
+  const ownedGroups = relationships.filter((item) => item.entity_type === 'GROUP_MEMBER' && item.role === 'owner');
+  if (ownedGroups.length > 0) {
+    throw new ProviderError('Delete the groups you own before deleting your account.', 409);
+  }
+
+  for (const item of relationships) {
+    if (!item.PK || !item.SK || !item.group_id) continue;
+    await transactWrite([
+      {
+        Delete: {
+          TableName: GROUPS_TABLE,
+          Key: { PK: item.PK, SK: item.SK },
+          ConditionExpression: 'GSI1PK = :user',
+          ExpressionAttributeValues: { ':user': userKey },
+        },
+      },
+      {
+        Update: {
+          TableName: GROUPS_TABLE,
+          Key: { PK: `GROUP#${item.group_id}`, SK: 'GROUP' },
+          UpdateExpression: 'SET updated_at = :now ADD people_count :minusOne',
+          ConditionExpression: 'attribute_exists(PK) AND people_count > :zero',
+          ExpressionAttributeValues: { ':now': timestamp(), ':minusOne': -1, ':zero': 0 },
+        },
+      },
+    ]);
+  }
+  await deleteItem(GROUPS_TABLE, { PK: userKey, SK: 'OWNED_GROUPS' });
+}
+
+async function deleteAccountData(userId, profile) {
+  await removeAccountGroupRelationships(userId);
+  const [taskItems, enrollments] = await Promise.all([
+    queryTable(TASKS_TABLE, {
+      KeyConditionExpression: 'PK = :pk',
+      ExpressionAttributeValues: { ':pk': `USER#${userId}` },
+    }),
+    queryTable(ENROLLMENTS_TABLE, {
+      KeyConditionExpression: 'user_id = :userId',
+      ExpressionAttributeValues: { ':userId': userId },
+    }),
+  ]);
+  await Promise.all([
+    batchWriteTable(TASKS_TABLE, taskItems.map((item) => ({ DeleteRequest: { Key: { PK: item.PK, SK: item.SK } } }))),
+    batchWriteTable(ENROLLMENTS_TABLE, enrollments.map((item) => ({ DeleteRequest: { Key: { user_id: item.user_id, class_id: item.class_id } } }))),
+    CALENDAR_CONNECTIONS_TABLE ? deleteItem(CALENDAR_CONNECTIONS_TABLE, { user_id: userId }) : Promise.resolve(),
+  ]);
+  if (profile?.profile_picture_key) {
+    await deleteOwnedMedia(userId, profile.profile_picture_key, 'profile_photo', true);
+  }
+}
+
+exports.deleteAccount = async (event) => {
+  const userId = getUserId(event);
+  if (!userId) return error('Unauthorized', 401);
+  if (!hasRecentAuthentication(event)) return error('Sign in again before deleting your account.', 403);
+  const body = parseBody(event);
+  if (body?.confirmation !== 'DELETE') return error('Type DELETE to confirm permanent account deletion.', 400);
+  if (!USER_POOL_ID) return error('Account deletion is not configured.', 503);
+
+  try {
+    const profile = await getItem(USERS_TABLE, { user_id: userId });
+    await deleteAccountData(userId, profile);
+    const username = getClaims(event)['cognito:username'];
+    if (typeof username !== 'string' || !username) return error('Account identity is unavailable.', 400);
+    try {
+      await cognitoClient.send(new AdminDeleteUserCommand({ UserPoolId: USER_POOL_ID, Username: username }));
+    } catch (deleteError) {
+      if (deleteError.name !== 'UserNotFoundException') throw deleteError;
+    }
+    await deleteItem(USERS_TABLE, { user_id: userId });
+    return success({ message: 'Account deleted' });
+  } catch (err) {
+    if (err instanceof ProviderError || err instanceof MediaError) return error(err.message, err.statusCode);
+    if (['ConditionalCheckFailedException', 'TransactionCanceledException'].includes(err.name)) {
+      return error('Your account data changed. Refresh and try deletion again.', 409);
+    }
+    console.error('Account deletion failed', { category: String(err?.name || 'Error').slice(0, 64) });
+    return error('Failed to finish deleting the account. Please try again.', 500);
+  }
+};
 
 exports.getProfile = async (event) => {
   try {
