@@ -1,4 +1,4 @@
-const CACHE_NAME = 'academic-tasks-v2';
+const CACHE_NAME = 'munera-v1';
 const APP_SHELL = [
   '/',
   '/index.html',

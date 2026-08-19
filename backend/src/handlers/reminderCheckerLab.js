@@ -106,7 +106,7 @@ function reminderEmail(task, reminder) {
     '',
     `Task: ${title}`,
     `Deadline: ${deadline}`,
-    appUrl ? `Open Academic Task Manager: ${appUrl}` : '',
+    appUrl ? `Open Munera: ${appUrl}` : '',
   ].filter(Boolean).join('\n');
 
   return {

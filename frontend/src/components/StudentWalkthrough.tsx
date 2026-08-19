@@ -27,7 +27,7 @@ const steps = [
   {
     eyebrow: 'Welcome',
     title: 'Your study plan, all in one place',
-    description: 'Academic Tasks helps you see what matters now, plan your next step, and keep group work moving.',
+    description: 'Munera helps you see what matters now, plan your next step, and keep group work moving.',
     icon: Sparkles,
     accent: 'onboarding-blue',
     points: ['See today’s priorities', 'Track progress at a glance', 'Use it on desktop or your phone'],
@@ -193,7 +193,7 @@ function StudentWalkthrough() {
     <div className="onboarding-backdrop" role="presentation">
       <div ref={dialogRef} className="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" aria-describedby="onboarding-description">
         <div className="onboarding-topbar">
-          <div className="onboarding-brand"><img src="/icons/app-icon.svg" alt="" /><span>Academic Tasks</span></div>
+          <div className="onboarding-brand"><img src="/icons/app-icon.svg" alt="" /><span>Munera</span></div>
           <button type="button" className="onboarding-skip" onClick={() => saving ? continueWithoutSaving() : void finish()}>{saving ? 'Continue without saving' : manualOpen ? <><X size={16} /> Close</> : 'Skip tour'}</button>
         </div>
 

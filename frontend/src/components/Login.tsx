@@ -69,7 +69,7 @@ function Login() {
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <div className="text-center mb-8">
             <img src="/icons/app-icon.svg" alt="" aria-hidden="true" width="80" height="80" className="mx-auto mb-4 h-20 w-20 rounded-3xl shadow-lg shadow-blue-600/20" />
-            <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-primary-600">Academic Tasks</p>
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-primary-600">Munera</p>
             <h1 className="text-3xl font-bold text-gray-900">{nativeMfaChallenge ? 'Verify it’s you' : 'Welcome back'}</h1>
             <p className="text-gray-600 mt-2">
               {nativeMfaChallenge?.type === 'totp'

@@ -51,7 +51,7 @@ function Layout({ children }: LayoutProps) {
   const isActive = (path: string) => location.pathname === path;
   const pageName = isActive('/account/settings')
     ? 'Account settings'
-    : desktopNavigation.find((item) => isActive(item.href))?.desktopName || 'Academic Tasks';
+    : desktopNavigation.find((item) => isActive(item.href))?.desktopName || 'Munera';
   const moreActive = isActive('/modules') || isActive('/smart-ai') || isActive('/admin') || isActive('/account/settings');
   const displayName = profile.display_name || user?.preferred_username || user?.username || 'User';
 
@@ -83,7 +83,7 @@ function Layout({ children }: LayoutProps) {
               <CheckSquare2 size={21} />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-gray-500">Academic Tasks</p>
+              <p className="truncate text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-gray-500">Munera</p>
               <h1 className="truncate text-lg font-semibold leading-tight">{pageName}</h1>
             </div>
           </div>
@@ -96,10 +96,10 @@ function Layout({ children }: LayoutProps) {
       </header>
 
       <aside className="app-surface fixed inset-y-0 left-0 z-20 hidden w-[17rem] flex-col border-r lg:flex">
-        <Link to="/dashboard" className="flex items-center gap-3 px-6 py-6" aria-label="Academic Tasks home">
+        <Link to="/dashboard" className="flex items-center gap-3 px-6 py-6" aria-label="Munera home">
           <div className="brand-mark h-11 w-11"><CheckSquare2 size={23} /></div>
           <div>
-            <h1 className="text-[1.05rem] font-semibold tracking-tight">Academic Tasks</h1>
+            <h1 className="text-[1.05rem] font-semibold tracking-tight">Munera</h1>
             <p className="mt-0.5 text-xs text-gray-500">Plan less. Accomplish more.</p>
           </div>
         </Link>

@@ -169,7 +169,7 @@ Task Details:
 Don't forget to complete your task on time!
 
 Best regards,
-Academic Task Manager
+Munera
   `.trim();
 
   const params = {

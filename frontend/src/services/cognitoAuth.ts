@@ -287,7 +287,7 @@ export const cognitoAuth = {
     const data = await cognitoRequest('AWSCognitoIdentityProviderService.VerifySoftwareToken', {
       AccessToken: accessToken,
       UserCode: code,
-      FriendlyDeviceName: 'Academic Tasks authenticator',
+      FriendlyDeviceName: 'Munera authenticator',
     });
     if (data.Status !== 'SUCCESS') throw new Error('The authenticator code could not be verified.');
   },

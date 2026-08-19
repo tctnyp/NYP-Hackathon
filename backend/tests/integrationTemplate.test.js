@@ -44,7 +44,7 @@ describe('Cognito native MFA deployment configuration', () => {
   });
 
   test('only configures Cognito email authentication content when email OTP is enabled', () => {
-    expect(template).toContain("EmailAuthenticationSubject: !If [HasNativeEmailMfa, Your Academic Tasks sign-in code, !Ref 'AWS::NoValue']");
-    expect(template).toContain("EmailAuthenticationMessage: !If [HasNativeEmailMfa, 'Your Academic Tasks sign-in code is {####}.', !Ref 'AWS::NoValue']");
+    expect(template).toContain("EmailAuthenticationSubject: !If [HasNativeEmailMfa, Your Munera sign-in code, !Ref 'AWS::NoValue']");
+    expect(template).toContain("EmailAuthenticationMessage: !If [HasNativeEmailMfa, 'Your Munera sign-in code is {####}.', !Ref 'AWS::NoValue']");
   });
 });

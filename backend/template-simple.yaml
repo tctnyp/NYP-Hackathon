@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Academic Task Manager Backend - Serverless Application (Simplified for AWS Academy)
+Description: Munera Backend - Serverless Application (Simplified for AWS Academy)
 
 Globals:
   Function:
     Timeout: 30
-    Runtime: nodejs20.x
+    Runtime: nodejs24.x
     MemorySize: 512
     Environment:
       Variables:
@@ -104,7 +104,7 @@ Resources:
       - TaskManagerApiStage
     Properties:
       Name: !Sub academic-task-manager-key-${Environment}
-      Description: API Key for Academic Task Manager
+      Description: API Key for Munera
       Enabled: true
       StageKeys:
         - RestApiId: !Ref TaskManagerApi
@@ -117,7 +117,7 @@ Resources:
       - TaskManagerApiStage
     Properties:
       UsagePlanName: !Sub academic-task-manager-usage-${Environment}
-      Description: Usage plan for Academic Task Manager
+      Description: Usage plan for Munera
       ApiStages:
         - ApiId: !Ref TaskManagerApi
           Stage: !Ref Environment

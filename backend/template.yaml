@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Academic Task Manager - AWS Academy lab deployment with Cognito authentication
+Description: Munera - AWS Academy lab deployment with Cognito authentication
 
 Parameters:
   Environment:
@@ -320,8 +320,8 @@ Resources:
       EnabledMfas:
         - SOFTWARE_TOKEN_MFA
         - !If [HasNativeEmailMfa, EMAIL_OTP, !Ref 'AWS::NoValue']
-      EmailAuthenticationSubject: !If [HasNativeEmailMfa, Your Academic Tasks sign-in code, !Ref 'AWS::NoValue']
-      EmailAuthenticationMessage: !If [HasNativeEmailMfa, 'Your Academic Tasks sign-in code is {####}.', !Ref 'AWS::NoValue']
+      EmailAuthenticationSubject: !If [HasNativeEmailMfa, Your Munera sign-in code, !Ref 'AWS::NoValue']
+      EmailAuthenticationMessage: !If [HasNativeEmailMfa, 'Your Munera sign-in code is {####}.', !Ref 'AWS::NoValue']
       AliasAttributes:
         - email
       AutoVerifiedAttributes:

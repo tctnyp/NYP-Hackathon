@@ -37,7 +37,7 @@ function taskEvent(task: Task) {
   const { start, end } = calendarWindow(task);
   return [
     'BEGIN:VEVENT',
-    `UID:${escapeIcs(task.task_id)}@academic-tasks`,
+    `UID:${escapeIcs(task.task_id)}@munera`,
     `DTSTAMP:${compactUtc(new Date())}`,
     `DTSTART:${compactUtc(start)}`,
     `DTEND:${compactUtc(end)}`,
@@ -57,7 +57,7 @@ function calendarFile(tasks: Task[]) {
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Academic Tasks//Calendar Export//EN',
+    'PRODID:-//Munera//Calendar Export//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     ...tasks.map(taskEvent),
@@ -101,7 +101,7 @@ export async function exportTaskToDeviceCalendar(task: Task) {
 }
 
 export function exportTasksToIcs(tasks: Task[]) {
-  downloadCalendar(calendarFile(tasks), 'academic-tasks.ics');
+  downloadCalendar(calendarFile(tasks), 'munera-tasks.ics');
 }
 
 export function googleCalendarUrl(task: Task) {

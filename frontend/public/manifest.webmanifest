@@ -1,6 +1,6 @@
 {
-  "name": "Academic Tasks",
-  "short_name": "Tasks",
+  "name": "Munera",
+  "short_name": "Munera",
   "description": "Plan assignments, deadlines, modules, and study priorities from any device.",
   "id": "/",
   "start_url": "/dashboard?source=pwa",

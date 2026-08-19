@@ -1,8 +1,8 @@
-# Academic Tasks
+# Munera
 
 > **Branch:** `dev` — active development source with Smart AI planning.
 
-Academic Tasks is a responsive academic workload manager for deadlines, assignments, modules, progress, reminders, and study planning.
+Munera is a responsive academic workload manager for deadlines, assignments, modules, progress, reminders, and study planning.
 
 ## Development feature set
 

@@ -1,6 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="116" fill="#2563eb"/>
-  <rect x="116" y="96" width="280" height="320" rx="52" fill="#ffffff"/>
-  <path d="M178 190l38 38 76-82" fill="none" stroke="#2563eb" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M178 300h156M178 354h110" fill="none" stroke="#93c5fd" stroke-width="24" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Munera">
+  <defs>
+    <linearGradient id="munera-gradient" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#munera-gradient)"/>
+  <path d="M112 368V152c0-22 18-40 40-40h18c15 0 29 9 36 22l50 96 50-96c7-13 21-22 36-22h18c22 0 40 18 40 40v216h-68V230l-46 88c-6 12-18 19-30 19s-24-7-30-19l-46-88v138h-68Z" fill="#fff"/>
+  <path d="M112 392h288" fill="none" stroke="#bfdbfe" stroke-width="20" stroke-linecap="round"/>
 </svg>
