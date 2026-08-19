@@ -52,6 +52,7 @@ process.env.GOOGLE_OAUTH_CLIENT_ID = 'google-client';
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'google-secret';
 process.env.GOOGLE_OAUTH_REDIRECT_URI = 'https://nypxaws.tancheetiong.com/account/settings';
 process.env.CALENDAR_CONNECTIONS_TABLE = 'calendar-test';
+process.env.NATIVE_EMAIL_MFA_ENABLED = 'false';
 
 const account = require('../src/handlers/account');
 
@@ -98,6 +99,7 @@ const existingProfile = {
 describe('account handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.NATIVE_EMAIL_MFA_ENABLED = 'false';
     mockDocumentSend.mockReset();
     mockCognitoSend.mockReset();
     mockDeleteOwnedMedia.mockReset().mockResolvedValue(undefined);
@@ -160,6 +162,55 @@ describe('account handler', () => {
     expect(data.connections.discord.available).toBe(true);
     expect(data.connections.discord.disconnect_allowed).toBe(true);
     expect(data.password_change_available).toBe(false);
+    expect(data.native_mfa).toEqual({
+      available: false,
+      totp_available: false,
+      email_available: false,
+      provider_managed: 'google',
+    });
+  });
+
+  test('GET recognizes a Discord-origin user without requiring a second OAuth link', async () => {
+    const profileWithoutDiscord = { ...existingProfile };
+    delete profileWithoutDiscord.oauth_connection_discord;
+    mockGetItem.mockResolvedValueOnce(profileWithoutDiscord);
+
+    const response = await account.getProfile(event(undefined, {
+      'cognito:username': 'Discord_discord-user-id',
+      preferred_username: 'student123',
+      identities: JSON.stringify([{ providerName: 'Discord', userId: 'discord-user-id' }]),
+    }));
+    const data = responseData(response);
+
+    expect(response.statusCode).toBe(200);
+    expect(data.connections.discord).toEqual(expect.objectContaining({
+      connected: true,
+      display_name: 'Student Name',
+      email: 'student@example.com',
+      disconnect_allowed: false,
+    }));
+    expect(data.connections.discord.provider_user_id).toBeUndefined();
+    expect(data.password_change_available).toBe(false);
+    expect(data.native_mfa).toEqual({
+      available: false,
+      totp_available: false,
+      email_available: false,
+      provider_managed: 'discord',
+    });
+  });
+
+  test('GET exposes TOTP for local users and gates email MFA through resolved infrastructure configuration', async () => {
+    let data = responseData(await account.getProfile(event()));
+    expect(data.native_mfa).toEqual({
+      available: true,
+      totp_available: true,
+      email_available: false,
+      provider_managed: null,
+    });
+
+    process.env.NATIVE_EMAIL_MFA_ENABLED = 'true';
+    data = responseData(await account.getProfile(event()));
+    expect(data.native_mfa.email_available).toBe(true);
   });
 
   test('updates validated profile fields, promotes a staged picture, and returns its signed URL', async () => {
@@ -379,7 +430,7 @@ describe('account handler', () => {
     expect(JSON.stringify(mockDocumentSend.mock.calls)).not.toContain('discord-refresh-secret');
   });
 
-  test('links Discord to a Google-origin destination using the Google provider subject', async () => {
+  test('links Discord to a Google-origin Cognito user without replacing the destination username', async () => {
     global.fetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'discord-access-secret' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'discord-subject', username: 'student123' }) });
@@ -395,10 +446,12 @@ describe('account handler', () => {
     expect(response.statusCode).toBe(200);
     expect(mockCognitoSend).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
-        DestinationUser: { ProviderName: 'Cognito', ProviderAttributeValue: 'google-subject' },
+        DestinationUser: { ProviderName: 'Cognito', ProviderAttributeValue: 'Google_primary' },
         SourceUser: expect.objectContaining({ ProviderName: 'Discord', ProviderAttributeValue: 'discord-subject' }),
       }),
     }));
+    expect(responseData(response).connections.google.connected).toBe(true);
+    expect(responseData(response).connections.discord.connected).toBe(true);
     expect(mockDocumentSend.mock.calls.some(([command]) => command.input.ExpressionAttributeValues?.[':connection']?.cognito_linked === true)).toBe(true);
   });
 
@@ -436,7 +489,7 @@ describe('account handler', () => {
     expect(JSON.stringify(mockDocumentSend.mock.calls)).not.toContain('google-access-secret');
   });
 
-  test('links Google to a Discord-origin destination using the Discord provider subject', async () => {
+  test('links Google to a Discord-origin Cognito user without replacing the destination username', async () => {
     global.fetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'google-access-secret' }) })
       .mockResolvedValueOnce({
@@ -460,10 +513,12 @@ describe('account handler', () => {
     expect(response.statusCode).toBe(200);
     expect(mockCognitoSend).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
-        DestinationUser: { ProviderName: 'Cognito', ProviderAttributeValue: 'discord-subject' },
+        DestinationUser: { ProviderName: 'Cognito', ProviderAttributeValue: 'Discord_primary' },
         SourceUser: expect.objectContaining({ ProviderName: 'Google', ProviderAttributeValue: 'google-subject' }),
       }),
     }));
+    expect(responseData(response).connections.google.connected).toBe(true);
+    expect(responseData(response).connections.discord.connected).toBe(true);
   });
 
   test('disconnects a Cognito-linked Discord identity from a local account', async () => {
@@ -508,6 +563,24 @@ describe('account handler', () => {
     expect(data.connections.discord.disconnect_allowed).toBe(false);
     expect(data.password_change_available).toBe(false);
     expect(mockCognitoSend).not.toHaveBeenCalled();
+  });
+
+  test('does not allow persisted primary Discord metadata to be disconnected with stale claims', async () => {
+    mockGetItem.mockResolvedValue({
+      ...existingProfile,
+      oauth_connection_discord: {
+        ...existingProfile.oauth_connection_discord,
+        primary: true,
+        status: 'active',
+      },
+    });
+
+    const response = await account.upsertProfile(event({ action: 'disconnect', provider: 'discord' }));
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body).error).toMatch(/primary Discord sign-in/i);
+    expect(mockCognitoSend).not.toHaveBeenCalled();
+    expect(mockDocumentSend).not.toHaveBeenCalled();
   });
 
   test('requires Calendar cleanup before disconnecting a linked Google identity', async () => {

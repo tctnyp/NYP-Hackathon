@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { accountApi, googleCalendarApi, GoogleCalendarSyncStatus } from '../services/api';
+import { accountApi, googleCalendarApi, GoogleCalendarSyncStatus, type NativeMfaCapability } from '../services/api';
 import { useAuth } from './AuthContext';
 
 export type ConnectionProvider = 'google' | 'discord';
@@ -38,6 +38,7 @@ export interface AccountData {
   profile: AccountProfile;
   connections: AccountConnections;
   password_change_available: boolean;
+  native_mfa: NativeMfaCapability;
   calendar_sync: GoogleCalendarSyncStatus;
 }
 
@@ -70,6 +71,12 @@ const emptyCalendarSync: GoogleCalendarSyncStatus = {
   enabled: false,
   status: 'disabled',
 };
+const emptyNativeMfa: NativeMfaCapability = {
+  available: false,
+  totp_available: false,
+  email_available: false,
+  provider_managed: null,
+};
 const AccountContext = createContext<AccountContextValue | undefined>(undefined);
 
 function errorMessage(error: unknown): string {
@@ -86,15 +93,23 @@ function errorMessage(error: unknown): string {
   return 'Unable to update account.';
 }
 
-function hasGoogleIdentity(user: ReturnType<typeof useAuth>['user']): boolean {
+function hasProviderIdentity(
+  user: ReturnType<typeof useAuth>['user'],
+  provider: ConnectionProvider,
+): boolean {
   if (!user) return false;
+  const normalizedProvider = provider.toLowerCase();
   const cognitoUsername = user['cognito:username'];
-  if (typeof cognitoUsername === 'string' && cognitoUsername.toLowerCase().startsWith('google_')) return true;
+  if (
+    typeof cognitoUsername === 'string'
+    && cognitoUsername.toLowerCase().startsWith(`${normalizedProvider}_`)
+  ) return true;
 
   try {
     const identities = typeof user.identities === 'string' ? JSON.parse(user.identities) : user.identities;
     return Array.isArray(identities) && identities.some((identity) => (
-      typeof identity?.providerName === 'string' && identity.providerName.toLowerCase() === 'google'
+      typeof identity?.providerName === 'string'
+      && identity.providerName.toLowerCase() === normalizedProvider
     ));
   } catch {
     return false;
@@ -113,6 +128,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [connections, setConnections] = useState<AccountConnections>(emptyConnections);
   const [calendarSync, setCalendarSync] = useState<GoogleCalendarSyncStatus>(emptyCalendarSync);
   const [passwordChangeAvailable, setPasswordChangeAvailable] = useState(false);
+  const [nativeMfa, setNativeMfa] = useState<NativeMfaCapability>(emptyNativeMfa);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -126,6 +142,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     }
     if (typeof data.password_change_available === 'boolean') {
       setPasswordChangeAvailable(data.password_change_available);
+    }
+    if (data.native_mfa) {
+      setNativeMfa(data.native_mfa);
     }
     if (data.calendar_sync) {
       setCalendarSync(data.calendar_sync);
@@ -163,6 +182,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       setConnections(emptyConnections);
       setCalendarSync(emptyCalendarSync);
       setPasswordChangeAvailable(false);
+      setNativeMfa(emptyNativeMfa);
       void refreshAccount();
 
     } else {
@@ -170,6 +190,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       setConnections(emptyConnections);
       setCalendarSync(emptyCalendarSync);
       setPasswordChangeAvailable(false);
+      setNativeMfa(emptyNativeMfa);
     }
   }, [claimDisplayName, refreshAccount, user]);
 
@@ -300,7 +321,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   }, [applyAccountData, refreshAccount, refreshSession]);
 
   const isConnected = useCallback((provider: ConnectionProvider) => {
-    if (provider === 'google' && hasGoogleIdentity(user)) return true;
+    if (hasProviderIdentity(user, provider)) return true;
     const connection = connections[provider];
     return typeof connection === 'boolean' ? connection : connection?.connected === true;
   }, [connections, user]);
@@ -309,6 +330,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     profile,
     connections,
     password_change_available: passwordChangeAvailable,
+    native_mfa: nativeMfa,
     calendar_sync: calendarSync,
     loading,
     error,
@@ -323,7 +345,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     syncCalendarNow,
     disableCalendarSync,
     isConnected,
-  }), [calendarSync, cancelOAuth, completeOAuth, completeOnboarding, connect, connections, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
+  }), [calendarSync, cancelOAuth, completeOAuth, completeOnboarding, connect, connections, disableCalendarSync, disconnect, enableCalendarSync, error, isConnected, loading, nativeMfa, passwordChangeAvailable, profile, refreshAccount, syncCalendarNow, updateProfile]);
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 }

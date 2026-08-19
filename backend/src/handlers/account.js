@@ -128,9 +128,7 @@ function isDiscordOrigin(event) {
 }
 
 function cognitoDestinationUser(event) {
-  let providerAttributeValue = getClaims(event)['cognito:username'];
-  if (isGoogleOrigin(event)) providerAttributeValue = googleIdentity(event)?.userId;
-  if (isDiscordOrigin(event)) providerAttributeValue = discordIdentity(event)?.userId;
+  const providerAttributeValue = getClaims(event)['cognito:username'];
   if (typeof providerAttributeValue !== 'string' || !providerAttributeValue) {
     throw new Error('Cognito account linking destination is unavailable');
   }
@@ -223,6 +221,13 @@ async function accountData(event, profile) {
       },
     },
     password_change_available: !googleOrigin && !discordOrigin,
+    native_mfa: {
+      available: !googleOrigin && !discordOrigin,
+      totp_available: !googleOrigin && !discordOrigin,
+      email_available: !googleOrigin && !discordOrigin
+        && process.env.NATIVE_EMAIL_MFA_ENABLED === 'true',
+      provider_managed: googleOrigin ? 'google' : (discordOrigin ? 'discord' : null),
+    },
   };
 }
 
@@ -811,6 +816,9 @@ async function disconnect(event, body, profile) {
   }
 
   const storedConnection = profile?.[connectionField(provider)];
+  if (storedConnection?.primary === true) {
+    return error(`The primary ${provider === 'google' ? 'Google' : 'Discord'} sign-in cannot be disconnected`, 409);
+  }
   const claimIdentity = provider === 'google' ? googleIdentity(event) : discordIdentity(event);
   const providerUserId = storedConnection?.provider_user_id || claimIdentity?.userId;
   let unlinking = storedConnection;

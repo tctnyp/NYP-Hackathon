@@ -18,7 +18,7 @@ process.env.USERS_TABLE = 'users-test';
 
 const postConfirmation = require('../src/handlers/postConfirmation');
 
-function event(triggerSource) {
+function event(triggerSource, attributeOverrides = {}) {
   return {
     triggerSource,
     userName: 'student',
@@ -27,6 +27,7 @@ function event(triggerSource) {
         sub: 'user-123',
         email: 'Student@Example.com',
         name: 'Student Name',
+        ...attributeOverrides,
       },
     },
   };
@@ -59,5 +60,32 @@ describe('postConfirmation onboarding eligibility', () => {
     await expect(postConfirmation.handler(sourceEvent)).resolves.toBe(sourceEvent);
 
     expect(mockSend.mock.calls[0][0].input.Item.preferences).toEqual({});
+  });
+
+  test('records Discord as the primary connected account on first federated sign-in', async () => {
+    const sourceEvent = event('PostConfirmation_ConfirmSignUp', {
+      preferred_username: 'student123',
+      identities: JSON.stringify([{
+        userId: 'discord-user-id',
+        providerName: 'Discord',
+        providerType: 'OIDC',
+        primary: true,
+      }]),
+    });
+
+    await expect(postConfirmation.handler(sourceEvent)).resolves.toBe(sourceEvent);
+
+    const item = mockSend.mock.calls[0][0].input.Item;
+    expect(item.auth_provider).toBe('federated');
+    expect(item.oauth_connection_discord).toEqual(expect.objectContaining({
+      provider_user_id: 'discord-user-id',
+      username: 'student123',
+      display_name: 'Student Name',
+      email: 'Student@Example.com',
+      status: 'active',
+      primary: true,
+      cognito_linked: false,
+    }));
+    expect(JSON.stringify(item)).not.toMatch(/access_token|refresh_token/i);
   });
 });

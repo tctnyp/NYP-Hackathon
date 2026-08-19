@@ -13,7 +13,7 @@ exports.handler = async (event) => {
   console.log('PostConfirmation trigger invoked for user:', event.userName);
 
   try {
-    const { sub, email, name, identities } = event.request.userAttributes;
+    const { sub, email, name, identities, preferred_username: preferredUsername } = event.request.userAttributes;
 
     if (!sub || !email) {
       console.error('Missing required attributes: sub or email');
@@ -22,6 +22,33 @@ exports.handler = async (event) => {
 
     const now = new Date().toISOString();
     const onboardingRequired = event.triggerSource === 'PostConfirmation_ConfirmSignUp';
+    let discordIdentity = null;
+    if (typeof identities === 'string' && identities.trim()) {
+      try {
+        const parsed = JSON.parse(identities);
+        discordIdentity = Array.isArray(parsed)
+          ? parsed.find((identity) => (
+            identity
+            && typeof identity.providerName === 'string'
+            && identity.providerName.toLowerCase() === 'discord'
+            && typeof identity.userId === 'string'
+            && identity.userId
+          )) || null
+          : null;
+      } catch {
+        // Cognito owns this attribute; malformed identity metadata should not block confirmation.
+      }
+    }
+    const discordConnection = discordIdentity ? {
+      provider_user_id: discordIdentity.userId,
+      username: preferredUsername || name || email.split('@')[0],
+      display_name: name || preferredUsername || email.split('@')[0],
+      email,
+      connected_at: now,
+      status: 'active',
+      primary: true,
+      cognito_linked: false,
+    } : null;
 
     // Create user profile
     const profileCommand = new PutCommand({
@@ -37,6 +64,7 @@ exports.handler = async (event) => {
         preferences: onboardingRequired ? { onboarding_required: true } : {},
         role: 'user',
         auth_provider: identities ? 'federated' : 'cognito',
+        ...(discordConnection ? { oauth_connection_discord: discordConnection } : {}),
         created_at: now,
         updated_at: now,
       },

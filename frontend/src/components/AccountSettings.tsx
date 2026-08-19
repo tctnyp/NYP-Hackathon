@@ -7,6 +7,7 @@ import { ThemePreference, useTheme } from '../contexts/ThemeContext';
 import BackgroundPicker from './BackgroundPicker';
 import { LoginStorageSettings } from './LoginStorageConsent';
 import NotificationSettings from './NotificationSettings';
+import NativeMfaSettings from './NativeMfaSettings';
 import { openStudentWalkthrough } from './StudentWalkthrough';
 import { discardTemporaryMedia, uploadTemporaryMedia } from '../services/media';
 import { resizeProfilePhoto } from '../utils/imageResize';
@@ -40,6 +41,7 @@ function AccountSettings() {
     profile,
     connections,
     password_change_available: passwordChangeAvailable,
+    native_mfa: nativeMfa,
     loading,
     error: accountError,
     updateProfile,
@@ -358,6 +360,8 @@ function AccountSettings() {
       </section>
 
       <LoginStorageSettings />
+
+      <NativeMfaSettings capability={nativeMfa} email={profile.email || user?.email} />
 
       <NotificationSettings />
       <section className="card" aria-labelledby="walkthrough-heading">

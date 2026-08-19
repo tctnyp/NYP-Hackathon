@@ -27,10 +27,15 @@ function clearOAuthTransactionStorage(includeReturnPath = true) {
 
 type CognitoTokens = AuthTokens;
 
-interface ChallengeResponse {
+export interface ChallengeResponse {
   ChallengeName: string;
   Session: string;
   ChallengeParameters: Record<string, string>;
+}
+
+export interface NativeMfaStatus {
+  enabled: Array<'totp' | 'email'>;
+  preferred: 'totp' | 'email' | null;
 }
 
 // Base64url encoding for PKCE
@@ -84,6 +89,22 @@ async function cognitoRequest(target: string, body: any): Promise<any> {
   }
 
   return data;
+}
+
+function storeAuthenticationResult(
+  result: any,
+  storagePreference: AuthStoragePreference,
+): CognitoTokens {
+  const tokens: CognitoTokens = {
+    IdToken: result.IdToken,
+    AccessToken: result.AccessToken,
+    RefreshToken: result.RefreshToken,
+    ExpiresIn: result.ExpiresIn,
+  };
+  if (!tokenStorage.setTokens(tokens, storagePreference)) {
+    throw new Error('This browser could not store the authentication session');
+  }
+  return tokens;
 }
 
 // Decode JWT payload (for UI display only, not for validation)
@@ -154,16 +175,7 @@ export const cognitoAuth = {
     });
 
     if (data.AuthenticationResult) {
-      const tokens: CognitoTokens = {
-        IdToken: data.AuthenticationResult.IdToken,
-        AccessToken: data.AuthenticationResult.AccessToken,
-        RefreshToken: data.AuthenticationResult.RefreshToken,
-        ExpiresIn: data.AuthenticationResult.ExpiresIn,
-      };
-      if (!tokenStorage.setTokens(tokens, storagePreference)) {
-        throw new Error('This browser could not store the authentication session');
-      }
-      return tokens;
+      return storeAuthenticationResult(data.AuthenticationResult, storagePreference);
     }
 
     // Handle challenges (e.g., NEW_PASSWORD_REQUIRED)
@@ -172,6 +184,105 @@ export const cognitoAuth = {
       Session: data.Session,
       ChallengeParameters: data.ChallengeParameters || {},
     };
+  },
+
+  async respondToMfaChallenge(
+    challenge: ChallengeResponse,
+    username: string,
+    code: string,
+    storagePreference: AuthStoragePreference,
+  ): Promise<CognitoTokens | ChallengeResponse> {
+    const responseField = challenge.ChallengeName === 'SOFTWARE_TOKEN_MFA'
+      ? 'SOFTWARE_TOKEN_MFA_CODE'
+      : challenge.ChallengeName === 'EMAIL_OTP'
+        ? 'EMAIL_OTP_CODE'
+        : null;
+    if (!responseField) throw new Error('This authentication challenge is not supported.');
+
+    const canonicalUsername = challenge.ChallengeParameters.USER_ID_FOR_SRP || username;
+    const data = await cognitoRequest('AWSCognitoIdentityProviderService.RespondToAuthChallenge', {
+      ClientId: COGNITO_CLIENT_ID,
+      ChallengeName: challenge.ChallengeName,
+      Session: challenge.Session,
+      ChallengeResponses: {
+        USERNAME: canonicalUsername,
+        [responseField]: code,
+      },
+    });
+
+    if (data.AuthenticationResult) {
+      return storeAuthenticationResult(data.AuthenticationResult, storagePreference);
+    }
+    return {
+      ChallengeName: data.ChallengeName,
+      Session: data.Session,
+      ChallengeParameters: data.ChallengeParameters || {},
+    };
+  },
+
+  async getMfaStatus(): Promise<NativeMfaStatus> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    const data = await cognitoRequest('AWSCognitoIdentityProviderService.GetUser', {
+      AccessToken: accessToken,
+    });
+    const settings = Array.isArray(data.UserMFASettingList) ? data.UserMFASettingList : [];
+    return {
+      enabled: [
+        ...(settings.includes('SOFTWARE_TOKEN_MFA') ? ['totp' as const] : []),
+        ...(settings.includes('EMAIL_OTP') ? ['email' as const] : []),
+      ],
+      preferred: data.PreferredMfaSetting === 'SOFTWARE_TOKEN_MFA'
+        ? 'totp'
+        : data.PreferredMfaSetting === 'EMAIL_OTP'
+          ? 'email'
+          : null,
+    };
+  },
+
+  async associateSoftwareToken(): Promise<string> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    const data = await cognitoRequest('AWSCognitoIdentityProviderService.AssociateSoftwareToken', {
+      AccessToken: accessToken,
+    });
+    if (!data.SecretCode) throw new Error('Cognito did not return an authenticator secret.');
+    return data.SecretCode;
+  },
+
+  async verifySoftwareToken(code: string): Promise<void> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    const data = await cognitoRequest('AWSCognitoIdentityProviderService.VerifySoftwareToken', {
+      AccessToken: accessToken,
+      UserCode: code,
+      FriendlyDeviceName: 'Academic Tasks authenticator',
+    });
+    if (data.Status !== 'SUCCESS') throw new Error('The authenticator code could not be verified.');
+  },
+
+  async setMfaPreference(options: {
+    totpEnabled?: boolean;
+    emailEnabled?: boolean;
+    preferred: 'totp' | 'email' | null;
+  }): Promise<void> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    await cognitoRequest('AWSCognitoIdentityProviderService.SetUserMFAPreference', {
+      AccessToken: accessToken,
+      ...(typeof options.totpEnabled === 'boolean' ? {
+        SoftwareTokenMfaSettings: {
+          Enabled: options.totpEnabled,
+          PreferredMfa: options.preferred === 'totp',
+        },
+      } : {}),
+      ...(typeof options.emailEnabled === 'boolean' ? {
+        EmailMfaSettings: {
+          Enabled: options.emailEnabled,
+          PreferredMfa: options.preferred === 'email',
+        },
+      } : {}),
+    });
   },
 
   async refreshTokens(): Promise<CognitoTokens> {
