@@ -3,6 +3,7 @@ import {
   BookOpen,
   CalendarDays,
   CheckSquare2,
+  ClipboardList,
   Download,
   LayoutDashboard,
   LogOut,
@@ -82,7 +83,7 @@ function Layout({ children }: LayoutProps) {
         <div className="mx-auto flex max-w-lg items-center justify-between gap-3 pr-12">
           <div className="flex min-w-0 items-center gap-3">
             <div className="brand-mark h-10 w-10">
-              <CheckSquare2 size={21} />
+              <ClipboardList size={21} />
             </div>
             <div className="min-w-0">
               <p className="truncate text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-gray-500">Munera</p>
@@ -99,7 +100,7 @@ function Layout({ children }: LayoutProps) {
 
       <aside className="app-surface fixed inset-y-0 left-0 z-20 hidden w-[17rem] flex-col border-r lg:flex">
         <Link to="/dashboard" className="flex items-center gap-3 px-6 py-6 pr-16" aria-label="Munera home">
-          <div className="brand-mark h-11 w-11"><CheckSquare2 size={23} /></div>
+          <div className="brand-mark h-11 w-11"><ClipboardList size={23} /></div>
           <div>
             <h1 className="text-[1.05rem] font-semibold tracking-tight">Munera</h1>
             <p className="mt-0.5 text-xs text-gray-500">Plan less. Accomplish more.</p>
