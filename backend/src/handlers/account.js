@@ -865,7 +865,8 @@ async function removeAccountGroupRelationships(userId) {
     KeyConditionExpression: 'GSI1PK = :user',
     ExpressionAttributeValues: { ':user': userKey },
   });
-  const ownedGroups = relationships.filter((item) => item.entity_type === 'GROUP_MEMBER' && item.role === 'owner');
+  const ownedGroups = relationships.filter((item) => item.entity_type === 'GROUP_MEMBER'
+    && (item.owner_id === userId || item.role === 'owner'));
   if (ownedGroups.length > 0) {
     throw new ProviderError('Delete the groups you own before deleting your account.', 409);
   }

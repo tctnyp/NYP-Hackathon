@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { CalendarClock, CircleHelp, Link2, LoaderCircle, LogOut, MessageCircle, Monitor, Moon, RefreshCw, Save, Sun, Trash2, Upload, UserRound, X } from 'lucide-react';
+import { CalendarClock, CircleHelp, Link2, LoaderCircle, LogOut, MailCheck, MessageCircle, Monitor, Moon, RefreshCw, Save, Sun, Trash2, Upload, UserRound, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionProvider, useAccount } from '../contexts/AccountContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,6 +11,7 @@ import NativeMfaSettings from './NativeMfaSettings';
 import { openStudentWalkthrough } from './StudentWalkthrough';
 import { discardTemporaryMedia, uploadTemporaryMedia } from '../services/media';
 import { resizeProfilePhoto } from '../utils/imageResize';
+import { invalidateNotifications } from '../utils/notifications';
 
 
 const themeOptions: Array<{ value: ThemePreference; label: string; icon: typeof Sun }> = [
@@ -36,7 +37,7 @@ function messageFrom(error: unknown) {
 function AccountSettings() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user, changePassword, signOut } = useAuth();
+  const { user, changePassword, sendEmailVerificationCode, verifyEmail, signOut } = useAuth();
   const {
     profile,
     connections,
@@ -73,6 +74,10 @@ function AccountSettings() {
   const [passwordError, setPasswordError] = useState('');
   const [passwordMessage, setPasswordMessage] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
+  const [emailVerificationCode, setEmailVerificationCode] = useState('');
+  const [emailVerificationError, setEmailVerificationError] = useState('');
+  const [emailVerificationMessage, setEmailVerificationMessage] = useState('');
+  const [emailVerificationBusy, setEmailVerificationBusy] = useState<'send' | 'verify' | null>(null);
   const [connectionBusy, setConnectionBusy] = useState<ConnectionProvider | 'callback' | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('');
@@ -95,6 +100,15 @@ function AccountSettings() {
   useEffect(() => () => {
     if (profilePreviewUrl.current) URL.revokeObjectURL(profilePreviewUrl.current);
   }, []);
+
+  useEffect(() => {
+    if (user?.email_verified !== false || window.location.hash !== '#email-verification') return;
+    window.setTimeout(() => {
+      const section = document.getElementById('email-verification');
+      section?.scrollIntoView({ block: 'center' });
+      section?.querySelector<HTMLElement>('h2')?.focus();
+    }, 0);
+  }, [user?.email_verified]);
 
   useEffect(() => {
     const code = searchParams.get('code');
@@ -242,6 +256,37 @@ function AccountSettings() {
     }
   };
 
+  const requestEmailVerificationCode = async () => {
+    setEmailVerificationBusy('send');
+    setEmailVerificationError('');
+    setEmailVerificationMessage('');
+    try {
+      await sendEmailVerificationCode();
+      setEmailVerificationMessage('A verification code was sent to your email address.');
+    } catch (verificationError) {
+      setEmailVerificationError(messageFrom(verificationError));
+    } finally {
+      setEmailVerificationBusy(null);
+    }
+  };
+
+  const confirmEmailVerification = async (event: FormEvent) => {
+    event.preventDefault();
+    setEmailVerificationBusy('verify');
+    setEmailVerificationError('');
+    setEmailVerificationMessage('');
+    try {
+      await verifyEmail(emailVerificationCode);
+      invalidateNotifications();
+      setEmailVerificationCode('');
+      setEmailVerificationMessage('Your email address is verified.');
+    } catch (verificationError) {
+      setEmailVerificationError(messageFrom(verificationError));
+    } finally {
+      setEmailVerificationBusy(null);
+    }
+  };
+
   const handleConnection = async (provider: ConnectionProvider, shouldDisconnect: boolean) => {
     setConnectionBusy(provider);
     setConnectionError('');
@@ -378,6 +423,52 @@ function AccountSettings() {
           </button>
         </form>
       </section>
+
+      {(user?.email_verified === false || emailVerificationMessage === 'Your email address is verified.') && (
+        <section id="email-verification" className="card" aria-labelledby="email-verification-heading">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700"><MailCheck size={22} /></div>
+              <div>
+                <h2 id="email-verification-heading" tabIndex={-1} className="text-lg font-semibold">Email verification</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {user?.email_verified === false
+                    ? `Verify ${user.email} to receive invitations addressed to this email.`
+                    : 'Your email address is verified.'}
+                </p>
+              </div>
+            </div>
+            {user?.email_verified === false && (
+              <button type="button" className="btn-secondary shrink-0" disabled={emailVerificationBusy !== null} onClick={() => void requestEmailVerificationCode()}>
+                {emailVerificationBusy === 'send' ? 'Sending…' : 'Send verification code'}
+              </button>
+            )}
+          </div>
+          {user?.email_verified === false && (
+            <form className="mt-5 flex max-w-lg flex-col gap-3 sm:flex-row sm:items-end" onSubmit={confirmEmailVerification}>
+              <label className="min-w-0 flex-1 space-y-1.5 text-sm font-medium" htmlFor="email-verification-code">
+                <span>Six-digit code</span>
+                <input
+                  id="email-verification-code"
+                  className="input-field"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  pattern="[0-9]{6}"
+                  required
+                  value={emailVerificationCode}
+                  onChange={(event) => setEmailVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+              </label>
+              <button type="submit" className="btn-primary shrink-0" disabled={emailVerificationBusy !== null || emailVerificationCode.length !== 6}>
+                {emailVerificationBusy === 'verify' ? 'Verifying…' : 'Verify email'}
+              </button>
+            </form>
+          )}
+          {emailVerificationError && <p className="mt-3 text-sm font-medium text-red-600" role="alert">{emailVerificationError}</p>}
+          {emailVerificationMessage && <p className="mt-3 text-sm font-medium text-green-700" role="status">{emailVerificationMessage}</p>}
+        </section>
+      )}
 
       <LoginStorageSettings />
 

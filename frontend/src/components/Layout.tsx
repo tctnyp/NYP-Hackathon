@@ -19,6 +19,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useAccount } from '../contexts/AccountContext';
 import { usePwa } from '../contexts/PwaContext';
 import TaskNotificationManager from './TaskNotificationManager';
+import NotificationCenter from './NotificationCenter';
 import StudentWalkthrough from './StudentWalkthrough';
 
 interface LayoutProps {
@@ -76,8 +77,9 @@ function Layout({ children }: LayoutProps) {
     <div className="app-shell min-h-[100dvh]">
       <TaskNotificationManager />
       <StudentWalkthrough />
+      <NotificationCenter />
       <header className="app-surface safe-top fixed inset-x-0 top-0 z-30 border-b px-4 pb-3 pt-3 backdrop-blur-xl lg:hidden">
-        <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
+        <div className="mx-auto flex max-w-lg items-center justify-between gap-3 pr-12">
           <div className="flex min-w-0 items-center gap-3">
             <div className="brand-mark h-10 w-10">
               <CheckSquare2 size={21} />
@@ -96,7 +98,7 @@ function Layout({ children }: LayoutProps) {
       </header>
 
       <aside className="app-surface fixed inset-y-0 left-0 z-20 hidden w-[17rem] flex-col border-r lg:flex">
-        <Link to="/dashboard" className="flex items-center gap-3 px-6 py-6" aria-label="Munera home">
+        <Link to="/dashboard" className="flex items-center gap-3 px-6 py-6 pr-16" aria-label="Munera home">
           <div className="brand-mark h-11 w-11"><CheckSquare2 size={23} /></div>
           <div>
             <h1 className="text-[1.05rem] font-semibold tracking-tight">Munera</h1>

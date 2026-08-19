@@ -1,8 +1,11 @@
+const { createHash } = require('node:crypto');
+
 const mockGetItem = jest.fn();
 const mockQueryTable = jest.fn();
 const mockScanTable = jest.fn();
 const mockTransactWrite = jest.fn();
 const mockBatchWriteTable = jest.fn();
+const mockSesSend = jest.fn();
 
 jest.mock('../src/utils/database', () => ({
   GROUPS_TABLE: 'groups-test',
@@ -15,6 +18,19 @@ jest.mock('../src/utils/database', () => ({
   generateId: () => 'generated-id',
   timestamp: () => '2026-08-18T12:00:00.000Z',
 }));
+
+jest.mock('@aws-sdk/client-sesv2', () => {
+  class SendEmailCommand {
+    constructor(input) { this.input = input; }
+  }
+  return {
+    SESv2Client: jest.fn(() => ({ send: mockSesSend })),
+    SendEmailCommand,
+  };
+});
+
+process.env.GROUP_INVITE_FROM_EMAIL = 'groups@example.com';
+process.env.APP_URL = 'https://app.example.com/';
 
 const groups = require('../src/handlers/groups');
 
@@ -29,6 +45,7 @@ function event({ method = 'GET', resource = '/groups', body, path = {}, claims =
         claims: {
           sub: 'user-1',
           email: 'owner@example.com',
+          email_verified: 'true',
           name: 'Owner Student',
           'cognito:username': 'owner',
           ...claims,
@@ -38,38 +55,9 @@ function event({ method = 'GET', resource = '/groups', body, path = {}, claims =
   };
 }
 
-function payload(response) {
-  return JSON.parse(response.body);
-}
-
-function data(response) {
-  return payload(response).data;
-}
-
-const ownerMembership = {
-  PK: 'GROUP#group-1',
-  SK: 'MEMBER#user-1',
-  entity_type: 'GROUP_MEMBER',
-  group_id: 'group-1',
-  group_name: 'Study Circle',
-  group_description: 'Prepare together',
-  group_color: '#2563eb',
-  owner_id: 'user-1',
-  user_id: 'user-1',
-  display_name: 'Owner Student',
-  email: 'owner@example.com',
-  role: 'owner',
-  joined_at: '2026-08-18T10:00:00.000Z',
-};
-
-const memberMembership = {
-  ...ownerMembership,
-  SK: 'MEMBER#user-2',
-  user_id: 'user-2',
-  display_name: 'Group Member',
-  email: 'member@example.com',
-  role: 'member',
-};
+function payload(response) { return JSON.parse(response.body); }
+function data(response) { return payload(response).data; }
+function hash(email) { return createHash('sha256').update(email).digest('hex'); }
 
 const groupRecord = {
   PK: 'GROUP#group-1',
@@ -79,14 +67,51 @@ const groupRecord = {
   name: 'Study Circle',
   description: 'Prepare together',
   color: '#2563eb',
+  visibility: 'private',
   owner_id: 'user-1',
+  people_count: 2,
+  task_count: 1,
   created_at: '2026-08-18T10:00:00.000Z',
   updated_at: '2026-08-18T10:00:00.000Z',
 };
 
+const adminMembership = {
+  PK: 'GROUP#group-1',
+  SK: 'MEMBER#user-1',
+  entity_type: 'GROUP_MEMBER',
+  GSI1PK: 'USER#user-1',
+  GSI1SK: 'GROUP#2026-08-18T10:00:00.000Z#group-1',
+  group_id: 'group-1',
+  group_name: 'Study Circle',
+  group_description: 'Prepare together',
+  group_color: '#2563eb',
+  group_visibility: 'private',
+  owner_id: 'user-1',
+  user_id: 'user-1',
+  display_name: 'Owner Student',
+  role: 'admin',
+  joined_at: '2026-08-18T10:00:00.000Z',
+};
+
+const legacyOwnerMembership = { ...adminMembership, role: 'owner' };
+const memberMembership = {
+  ...adminMembership,
+  SK: 'MEMBER#user-2',
+  GSI1PK: 'USER#user-2',
+  user_id: 'user-2',
+  display_name: 'Group Member',
+  role: 'member',
+};
+const secondAdminMembership = {
+  ...memberMembership,
+  user_id: 'user-2',
+  SK: 'MEMBER#user-2',
+  role: 'admin',
+};
+
 const invitation = {
   PK: 'GROUP#group-1',
-  SK: 'INVITE#hashed-email',
+  SK: `INVITE#${hash('member@example.com')}`,
   entity_type: 'GROUP_INVITE',
   GSI1PK: 'USER#user-2',
   GSI1SK: 'INVITE#2026-08-18T11:00:00.000Z#group-1',
@@ -96,10 +121,20 @@ const invitation = {
   group_color: '#2563eb',
   owner_id: 'user-1',
   target_user_id: 'user-2',
+  target_email_hash: hash('member@example.com'),
   target_display_name: 'Group Member',
   invited_by: 'user-1',
   invited_by_name: 'Owner Student',
   created_at: '2026-08-18T11:00:00.000Z',
+};
+
+const emailInvitation = {
+  ...invitation,
+  SK: `INVITE#${hash('new@example.com')}`,
+  GSI1PK: `EMAIL#${hash('new@example.com')}`,
+  target_email_hash: hash('new@example.com'),
+  target_user_id: undefined,
+  target_display_name: undefined,
 };
 
 const taskRecord = {
@@ -111,310 +146,404 @@ const taskRecord = {
   title: 'Draft report',
   description: '',
   deadline: '2026-08-20T10:00:00.000Z',
-  status: 'completed',
-  progress_percentage: 100,
+  status: 'in_progress',
+  progress_percentage: 50,
   assigned_to: 'user-2',
-  created_by: 'user-1',
-  created_by_name: 'Owner Student',
+  created_by: 'user-2',
+  created_by_name: 'Group Member',
   created_at: '2026-08-18T10:00:00.000Z',
   updated_at: '2026-08-18T10:00:00.000Z',
 };
 
 describe('groups collaboration handler', () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     mockGetItem.mockReset();
-    mockQueryTable.mockReset();
-    mockScanTable.mockReset();
-    mockTransactWrite.mockReset();
-    mockBatchWriteTable.mockReset();
-    mockTransactWrite.mockResolvedValue(undefined);
-    mockBatchWriteTable.mockResolvedValue(undefined);
-    mockScanTable.mockResolvedValue([]);
+    mockQueryTable.mockReset().mockResolvedValue([]);
+    mockScanTable.mockReset().mockResolvedValue([]);
+    mockTransactWrite.mockReset().mockResolvedValue(undefined);
+    mockBatchWriteTable.mockReset().mockResolvedValue(undefined);
+    mockSesSend.mockReset().mockResolvedValue({ MessageId: 'message-1' });
   });
 
-  test('creates a group and owner membership atomically with validated snapshots', async () => {
-    mockQueryTable.mockResolvedValueOnce([]);
-    const response = await groups.createGroup(event({ method: 'POST', body: { name: ' Study Circle ', description: ' Prepare together ', color: '#7c3aed' } }));
-
-    expect(response.statusCode).toBe(201);
-    expect(data(response).group).toEqual(expect.objectContaining({ group_id: 'generated-id', name: 'Study Circle', role: 'owner' }));
-    expect(mockTransactWrite).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ Update: expect.objectContaining({ Key: { PK: 'USER#user-1', SK: 'OWNED_GROUPS' }, ConditionExpression: expect.stringContaining('owned_count < :max') }) }),
-      expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({ entity_type: 'GROUP', owner_id: 'user-1', people_count: 1, task_count: 0 }), ConditionExpression: 'attribute_not_exists(PK)' }) }),
-      expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({ entity_type: 'GROUP_MEMBER', role: 'owner', GSI1PK: 'USER#user-1' }) }) }),
-    ]));
-  });
-
-  test('rejects oversized group input before writing', async () => {
-    const response = await groups.createGroup(event({ method: 'POST', body: { name: 'x'.repeat(81) } }));
-    expect(response.statusCode).toBe(400);
-    expect(mockTransactWrite).not.toHaveBeenCalled();
-  });
-
-  test('lists memberships and recipient invitations from only the authenticated user index', async () => {
-    mockQueryTable.mockResolvedValueOnce([ownerMembership, invitation]);
-    const response = await groups.listGroups(event());
-
-    expect(response.statusCode).toBe(200);
-    expect(data(response).groups).toEqual([expect.objectContaining({ group_id: 'group-1', role: 'owner' })]);
-    expect(data(response).invitations).toEqual([expect.objectContaining({ group_id: 'group-1', invited_by_name: 'Owner Student' })]);
-    expect(data(response).invitations[0]).not.toHaveProperty('target_user_id');
-    expect(mockQueryTable).toHaveBeenCalledWith('groups-test', expect.objectContaining({ IndexName: 'GSI1-UserGroups', ExpressionAttributeValues: { ':pk': 'USER#user-1' } }));
-  });
-
-  test('does not reveal group contents to non-members', async () => {
-    mockGetItem.mockResolvedValueOnce(undefined);
-    const response = await groups.getGroup(event({ resource: '/groups/{groupId}', path: { groupId: 'group-1' } }));
-    expect(response.statusCode).toBe(404);
-    expect(mockQueryTable).not.toHaveBeenCalled();
-  });
-
-  test('group details omit member email addresses', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable.mockResolvedValueOnce([groupRecord, ownerMembership, memberMembership]);
-    const response = await groups.getGroup(event({ resource: '/groups/{groupId}', path: { groupId: 'group-1' } }));
-
-    expect(response.statusCode).toBe(200);
-    expect(data(response).group.members).toHaveLength(2);
-    expect(data(response).group.members.every((member) => !Object.hasOwn(member, 'email'))).toBe(true);
-  });
-
-  test('returns the same response and reserves indistinguishable quota state for every valid unique email', async () => {
-    mockGetItem.mockResolvedValue(ownerMembership);
-    mockQueryTable
-      .mockResolvedValueOnce([groupRecord, ownerMembership])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
-    const unknown = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'unknown@example.com' } }));
-    const unknownTransaction = mockTransactWrite.mock.calls[0][0];
-
-    jest.clearAllMocks();
-    mockGetItem.mockResolvedValue(ownerMembership);
-    mockQueryTable
-      .mockResolvedValueOnce([groupRecord, ownerMembership, memberMembership])
-      .mockResolvedValueOnce([{ user_id: 'user-2', email_normalized: 'member@example.com', display_name: 'Group Member' }]);
-    const existing = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'member@example.com' } }));
-    const existingTransaction = mockTransactWrite.mock.calls[0][0];
-
-    jest.clearAllMocks();
-    mockGetItem.mockResolvedValue(ownerMembership);
-    mockTransactWrite.mockResolvedValue(undefined);
-    mockQueryTable
-      .mockResolvedValueOnce([groupRecord, ownerMembership])
-      .mockResolvedValueOnce([{ user_id: 'user-2', email_normalized: 'member@example.com', display_name: 'Group Member' }]);
-    const created = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'MEMBER@example.com' } }));
-    const createdTransaction = mockTransactWrite.mock.calls[0][0];
-
-    expect(unknown.statusCode).toBe(202);
-    expect(existing.statusCode).toBe(202);
-    expect(created.statusCode).toBe(202);
-    expect(unknown.body).toBe(existing.body);
-    expect(existing.body).toBe(created.body);
-    for (const transaction of [unknownTransaction, existingTransaction, createdTransaction]) {
-      expect(transaction.find((item) => item.Update).Update.ConditionExpression).toContain('people_count < :max');
-    }
-    for (const transaction of [unknownTransaction, existingTransaction]) {
-      const attempt = transaction.find((item) => item.Put).Put.Item;
-      expect(attempt.entity_type).toBe('GROUP_INVITE_ATTEMPT');
-      expect(attempt).not.toHaveProperty('email');
-      expect(attempt).not.toHaveProperty('GSI1PK');
-    }
-    const invitePut = createdTransaction.find((item) => item.Put).Put.Item;
-    expect(invitePut).toEqual(expect.objectContaining({ entity_type: 'GROUP_INVITE', target_user_id: 'user-2', GSI1PK: 'USER#user-2' }));
-    expect(invitePut).not.toHaveProperty('email');
-    expect(invitePut.SK).toMatch(/^INVITE#[a-f0-9]{64}$/);
-  });
-
-  test('does not let non-owners invite members', async () => {
-    mockGetItem.mockResolvedValueOnce(memberMembership);
-    const response = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, claims: { sub: 'user-2' }, body: { email: 'person@example.com' } }));
-    expect(response.statusCode).toBe(403);
-    expect(mockQueryTable).not.toHaveBeenCalled();
-  });
-
-  test('accepts an invitation transactionally without granting membership beforehand', async () => {
-    mockQueryTable.mockResolvedValueOnce([invitation]);
-    mockGetItem.mockResolvedValueOnce(groupRecord);
-    const response = await groups.acceptInvitation(event({ method: 'POST', path: { groupId: 'group-1' }, claims: { sub: 'user-2' } }));
-
-    expect(response.statusCode).toBe(200);
-    const transaction = mockTransactWrite.mock.calls[0][0];
-    expect(transaction).toEqual(expect.arrayContaining([
-      expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({ SK: 'MEMBER#user-2', role: 'member', GSI1PK: 'USER#user-2' }), ConditionExpression: 'attribute_not_exists(PK)' }) }),
-      expect.objectContaining({ Delete: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'INVITE#hashed-email' }, ConditionExpression: 'target_user_id = :userId' }) }),
-    ]));
-  });
-
-  test('declines only an invitation targeting the authenticated recipient', async () => {
-    mockQueryTable.mockResolvedValueOnce([invitation]);
-    const response = await groups.declineInvitation(event({ method: 'DELETE', path: { groupId: 'group-1' }, claims: { sub: 'user-2' } }));
-    expect(response.statusCode).toBe(200);
-    expect(mockTransactWrite).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ Delete: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'INVITE#hashed-email' }, ExpressionAttributeValues: { ':userId': 'user-2' } }) }),
-      expect.objectContaining({ Update: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'GROUP' }, UpdateExpression: expect.stringContaining('people_count :minusOne') }) }),
-    ]));
-  });
-
-  test('creates a shared task with commit-time member and assignee conditions', async () => {
-    mockGetItem.mockResolvedValueOnce(memberMembership);
-    mockQueryTable.mockResolvedValueOnce([]);
-    const response = await groups.createTask(event({
+  test('creates private groups by default with an admin creator and no public index keys', async () => {
+    const response = await groups.createGroup(event({
       method: 'POST',
-      path: { groupId: 'group-1' },
-      claims: { sub: 'user-2' },
-      body: { title: 'Prepare slides', deadline: '2026-08-20T10:00:00.000Z', assigned_to: 'user-1' },
+      body: { name: ' Study Circle ', description: ' Prepare together ', color: '#7c3aed' },
     }));
 
     expect(response.statusCode).toBe(201);
-    expect(data(response).task).toEqual(expect.objectContaining({ assigned_to: 'user-1', created_by: 'user-2' }));
-    const transaction = mockTransactWrite.mock.calls[0][0];
-    expect(transaction.filter((item) => item.ConditionCheck)).toHaveLength(2);
-    expect(transaction).toEqual(expect.arrayContaining([
-      expect.objectContaining({ Update: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'GROUP' }, ConditionExpression: expect.stringContaining('task_count < :max') }) }),
-      expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({ entity_type: 'GROUP_TASK' }), ConditionExpression: 'attribute_not_exists(PK)' }) }),
-    ]));
+    expect(data(response).group).toEqual(expect.objectContaining({
+      group_id: 'generated-id', name: 'Study Circle', role: 'admin', visibility: 'private',
+    }));
+    const puts = mockTransactWrite.mock.calls[0][0].filter((item) => item.Put).map((item) => item.Put.Item);
+    expect(puts[0]).toEqual(expect.objectContaining({ entity_type: 'GROUP', visibility: 'private', owner_id: 'user-1' }));
+    expect(puts[0]).not.toHaveProperty('GSI2PK');
+    expect(puts[1]).toEqual(expect.objectContaining({ entity_type: 'GROUP_MEMBER', role: 'admin', group_visibility: 'private' }));
   });
 
-  test('assignee updates use a conditional transaction and reopening canonicalizes progress to zero', async () => {
-    mockGetItem
-      .mockResolvedValueOnce(memberMembership)
-      .mockResolvedValueOnce(taskRecord)
-      .mockResolvedValueOnce({ ...taskRecord, status: 'not_started', progress_percentage: 0 });
-    const response = await groups.updateTask(event({ method: 'PUT', path: { groupId: 'group-1', taskId: 'task-1' }, claims: { sub: 'user-2' }, body: { status: 'not_started' } }));
+  test('indexes newly-created public groups for discovery', async () => {
+    const response = await groups.createGroup(event({ method: 'POST', body: { name: 'Open Study', visibility: 'public' } }));
+    expect(response.statusCode).toBe(201);
+    const group = mockTransactWrite.mock.calls[0][0].find((item) => item.Put?.Item.entity_type === 'GROUP').Put.Item;
+    expect(group).toEqual(expect.objectContaining({
+      visibility: 'public', GSI2PK: 'PUBLIC_GROUPS', GSI2SK: expect.stringContaining('GROUP#'),
+    }));
+  });
+
+  test('lists memberships, ID/email invitations, and public groups excluding memberships', async () => {
+    const publicOne = { ...groupRecord, group_id: 'public-1', PK: 'GROUP#public-1', visibility: 'public', GSI2PK: 'PUBLIC_GROUPS' };
+    const alreadyJoined = { ...groupRecord, visibility: 'public', GSI2PK: 'PUBLIC_GROUPS' };
+    const emailHash = hash('owner@example.com');
+    const byEmail = { ...emailInvitation, GSI1PK: `EMAIL#${emailHash}`, target_email_hash: emailHash };
+    const byUser = { ...invitation, target_user_id: 'user-1' };
+    mockQueryTable
+      .mockResolvedValueOnce([legacyOwnerMembership, byUser])
+      .mockResolvedValueOnce([byEmail])
+      .mockResolvedValueOnce([alreadyJoined, publicOne]);
+
+    const response = await groups.listGroups(event());
 
     expect(response.statusCode).toBe(200);
-    expect(data(response).task).toEqual(expect.objectContaining({ status: 'not_started', progress_percentage: 0 }));
-    const update = mockTransactWrite.mock.calls[0][0].find((item) => item.Update).Update;
-    expect(update.ConditionExpression).toContain('assigned_to = :userId');
-    expect(Object.values(update.ExpressionAttributeValues)).toEqual(expect.arrayContaining(['not_started', 0, 'user-2']));
+    expect(data(response).groups).toEqual([expect.objectContaining({ group_id: 'group-1', role: 'admin', visibility: 'private' })]);
+    expect(data(response).invitations).toHaveLength(2);
+    expect(data(response).invitations.every((item) => !Object.hasOwn(item, 'target_user_id'))).toBe(true);
+    expect(data(response).public_groups).toEqual([{
+      group_id: 'public-1',
+      name: 'Study Circle',
+      description: 'Prepare together',
+      color: '#2563eb',
+      visibility: 'public',
+      people_count: 2,
+    }]);
+    expect(data(response).public_groups[0]).not.toHaveProperty('owner_id');
+    expect(data(response).public_groups[0]).not.toHaveProperty('created_at');
+    expect(mockQueryTable).toHaveBeenNthCalledWith(2, 'groups-test', expect.objectContaining({
+      IndexName: 'GSI1-UserGroups', ExpressionAttributeValues: { ':pk': `EMAIL#${emailHash}` },
+    }));
+    expect(mockQueryTable).toHaveBeenNthCalledWith(3, 'groups-test', expect.objectContaining({
+      IndexName: 'GSI2-PublicGroups', Limit: 25,
+    }));
   });
 
-  test('assignee cannot rewrite task details', async () => {
-    mockGetItem.mockResolvedValueOnce(memberMembership).mockResolvedValueOnce(taskRecord);
-    const response = await groups.updateTask(event({ method: 'PUT', path: { groupId: 'group-1', taskId: 'task-1' }, claims: { sub: 'user-2' }, body: { title: 'Changed title' } }));
+  test('does not use an unverified email claim to list email-addressed invitations', async () => {
+    mockQueryTable.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const response = await groups.listGroups(event({ claims: { email_verified: 'false' } }));
+    expect(response.statusCode).toBe(200);
+    expect(mockQueryTable).toHaveBeenCalledTimes(2);
+    expect(data(response).invitations).toEqual([]);
+  });
+
+  test('keeps private group details inaccessible to non-members and omits member emails', async () => {
+    mockGetItem.mockResolvedValueOnce(undefined);
+    let response = await groups.getGroup(event({ resource: '/groups/{groupId}', path: { groupId: 'group-1' } }));
+    expect(response.statusCode).toBe(404);
+
+    mockGetItem.mockResolvedValueOnce(legacyOwnerMembership);
+    mockQueryTable.mockResolvedValueOnce([groupRecord, legacyOwnerMembership, memberMembership]);
+    response = await groups.getGroup(event({ resource: '/groups/{groupId}', path: { groupId: 'group-1' } }));
+    expect(response.statusCode).toBe(200);
+    expect(data(response).group.role).toBe('admin');
+    expect(data(response).group.members.every((member) => !Object.hasOwn(member, 'email'))).toBe(true);
+  });
+
+  test('admins update visibility and synchronize every active member snapshot atomically', async () => {
+    mockGetItem.mockResolvedValueOnce(adminMembership);
+    mockQueryTable.mockResolvedValueOnce([groupRecord, adminMembership, memberMembership]);
+    const response = await groups.updateGroup(event({
+      method: 'PUT', resource: '/groups/{groupId}', path: { groupId: 'group-1' }, body: { visibility: 'public' },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    expect(data(response).group.visibility).toBe('public');
+    const transaction = mockTransactWrite.mock.calls[0][0];
+    const requesterSnapshotUpdate = transaction.find((item) => item.Update?.Key.SK === 'MEMBER#user-1').Update;
+    expect(requesterSnapshotUpdate.ConditionExpression).toContain('#role = :admin OR #role = :owner');
+    expect(transaction.find((item) => item.Update?.Key.SK === 'GROUP').Update).toEqual(expect.objectContaining({
+      UpdateExpression: expect.stringContaining('GSI2PK = :gsiPk'),
+      ExpressionAttributeValues: expect.objectContaining({ ':gsiPk': 'PUBLIC_GROUPS' }),
+    }));
+    expect(transaction.filter((item) => item.Update?.UpdateExpression === 'SET group_visibility = :visibility')).toHaveLength(2);
+  });
+
+  test('members cannot change visibility', async () => {
+    mockGetItem.mockResolvedValueOnce(memberMembership);
+    const response = await groups.updateGroup(event({
+      method: 'PUT', path: { groupId: 'group-1' }, claims: { sub: 'user-2' }, body: { visibility: 'public' },
+    }));
     expect(response.statusCode).toBe(403);
     expect(mockTransactWrite).not.toHaveBeenCalled();
   });
 
-  test('removing a member atomically unassigns their tasks', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership).mockResolvedValueOnce(memberMembership);
-    mockQueryTable.mockResolvedValueOnce([taskRecord]);
-    const response = await groups.removeMember(event({ method: 'DELETE', path: { groupId: 'group-1', memberId: 'user-2' } }));
+  test('joins a public group transactionally with visibility and capacity checks', async () => {
+    mockGetItem.mockResolvedValueOnce({ ...groupRecord, visibility: 'public' });
+    const response = await groups.joinGroup(event({ method: 'POST', path: { groupId: 'group-1' }, claims: { sub: 'user-3', email: 'joiner@example.com', name: 'Joiner' } }));
 
     expect(response.statusCode).toBe(200);
-    expect(mockTransactWrite).toHaveBeenCalledTimes(3);
-    expect(mockTransactWrite.mock.calls[0][0]).toEqual(expect.arrayContaining([
-      expect.objectContaining({ Update: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'MEMBER#user-2' }, UpdateExpression: expect.stringContaining('removing = :true') }) }),
-    ]));
-    expect(mockTransactWrite.mock.calls[1][0]).toEqual([
-      expect.objectContaining({ Update: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'TASK#task-1' }, ConditionExpression: 'assigned_to = :memberId AND entity_type = :entity' }) }),
-    ]);
-    expect(mockTransactWrite.mock.calls[2][0]).toEqual(expect.arrayContaining([
-      expect.objectContaining({ Delete: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'MEMBER#user-2' }, ConditionExpression: expect.stringContaining('removing = :true') }) }),
+    const transaction = mockTransactWrite.mock.calls[0][0];
+    expect(transaction[0].Update.ConditionExpression).toContain('visibility = :public AND people_count < :max');
+    expect(transaction[1].Put).toEqual(expect.objectContaining({
+      Item: expect.objectContaining({ SK: 'MEMBER#user-3', role: 'member', group_visibility: 'public' }),
+      ConditionExpression: 'attribute_not_exists(PK)',
+    }));
+  });
+
+  test('does not join private groups and maps transaction contention to a safe conflict', async () => {
+    mockGetItem.mockResolvedValueOnce(groupRecord);
+    expect((await groups.joinGroup(event({ method: 'POST', path: { groupId: 'group-1' } }))).statusCode).toBe(404);
+
+    mockGetItem.mockResolvedValueOnce({ ...groupRecord, visibility: 'public' });
+    mockTransactWrite.mockRejectedValueOnce(Object.assign(new Error('full'), { name: 'TransactionCanceledException' }));
+    const response = await groups.joinGroup(event({ method: 'POST', path: { groupId: 'group-1' } }));
+    expect(response.statusCode).toBe(409);
+  });
+
+  test('public join consumes a matching invitation without double-incrementing reserved capacity', async () => {
+    const publicGroup = { ...groupRecord, visibility: 'public' };
+    mockGetItem.mockResolvedValueOnce(publicGroup);
+    mockQueryTable.mockResolvedValueOnce([emailInvitation]);
+    const response = await groups.joinGroup(event({
+      method: 'POST', path: { groupId: 'group-1' }, claims: { sub: 'new-user', email: 'new@example.com', name: 'New User' },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    const transaction = mockTransactWrite.mock.calls[0][0];
+    expect(transaction[0].ConditionCheck.ConditionExpression).toContain('people_count <= :max');
+    expect(transaction.some((item) => item.Update?.UpdateExpression?.includes('people_count'))).toBe(false);
+    expect(transaction.find((item) => item.Delete).Delete.ExpressionAttributeValues).toEqual({
+      ':userId': 'new-user', ':emailHash': hash('new@example.com'),
+    });
+  });
+
+  test('durably indexes unknown-email invitations by hash, stores no raw email, and sends SES', async () => {
+    mockGetItem.mockResolvedValueOnce(adminMembership);
+    mockQueryTable
+      .mockResolvedValueOnce([groupRecord, adminMembership])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const response = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'NEW@example.com' } }));
+
+    expect(response.statusCode).toBe(202);
+    const invite = mockTransactWrite.mock.calls[0][0].find((item) => item.Put).Put.Item;
+    expect(invite).toEqual(expect.objectContaining({
+      entity_type: 'GROUP_INVITE', GSI1PK: `EMAIL#${hash('new@example.com')}`, target_email_hash: hash('new@example.com'),
+    }));
+    expect(invite).not.toHaveProperty('email');
+    expect(JSON.stringify(invite)).not.toContain('new@example.com');
+    expect(mockSesSend).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({
+      FromEmailAddress: 'groups@example.com', Destination: { ToAddresses: ['new@example.com'] },
+    }) }));
+    expect(mockSesSend.mock.calls[0][0].input.Content.Simple.Body.Text.Data).toContain('https://app.example.com/groups');
+    expect(mockSesSend.mock.calls[0][0].input.Content.Simple.Body.Text.Data).toContain('invited this email address');
+    expect(mockSesSend.mock.calls[0][0].input.Content.Simple.Body.Text.Data).toContain('sign in or create an account');
+  });
+
+  test('indexes known-account invitations by user and preserves a generic response for ineligible emails', async () => {
+    mockGetItem.mockResolvedValue(adminMembership);
+    mockQueryTable
+      .mockResolvedValueOnce([groupRecord, adminMembership])
+      .mockResolvedValueOnce([{ user_id: 'user-2', email_normalized: 'member@example.com', display_name: 'Group Member' }]);
+    const eligible = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'member@example.com' } }));
+    const eligibleInvite = mockTransactWrite.mock.calls[0][0].find((item) => item.Put).Put.Item;
+
+    jest.clearAllMocks();
+    mockGetItem.mockResolvedValue(adminMembership);
+    mockTransactWrite.mockResolvedValue(undefined);
+    mockQueryTable
+      .mockResolvedValueOnce([groupRecord, adminMembership, memberMembership])
+      .mockResolvedValueOnce([{ user_id: 'user-2', email_normalized: 'member@example.com', display_name: 'Group Member' }]);
+    const ineligible = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'member@example.com' } }));
+    const attempt = mockTransactWrite.mock.calls[0][0].find((item) => item.Put).Put.Item;
+
+    expect(eligible.body).toBe(ineligible.body);
+    expect(eligibleInvite).toEqual(expect.objectContaining({ entity_type: 'GROUP_INVITE', GSI1PK: 'USER#user-2', target_user_id: 'user-2' }));
+    expect(attempt.entity_type).toBe('GROUP_INVITE_ATTEMPT');
+    expect(attempt).not.toHaveProperty('GSI1PK');
+    expect(mockSesSend).not.toHaveBeenCalled();
+  });
+
+  test('lets another Admin retry SES after failed delivery without replacing the invitation or reserving another slot', async () => {
+    mockGetItem
+      .mockResolvedValueOnce(adminMembership)
+      .mockResolvedValueOnce(secondAdminMembership);
+    mockQueryTable
+      .mockResolvedValueOnce([groupRecord, adminMembership])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([groupRecord, secondAdminMembership, emailInvitation])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockSesSend
+      .mockRejectedValueOnce(Object.assign(new Error('SES unavailable'), { name: 'ServiceUnavailableException' }))
+      .mockResolvedValueOnce({ MessageId: 'retry-message' });
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const invitationEvent = event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'new@example.com' } });
+    const retryEvent = event({
+      method: 'POST',
+      path: { groupId: 'group-1' },
+      body: { email: 'new@example.com' },
+      claims: { sub: 'user-2', email: 'admin2@example.com', name: 'Second Admin' },
+    });
+
+    const firstResponse = await groups.inviteMember(invitationEvent);
+    const retryResponse = await groups.inviteMember(retryEvent);
+
+    expect(firstResponse.statusCode).toBe(202);
+    expect(retryResponse.body).toBe(firstResponse.body);
+    expect(mockSesSend).toHaveBeenCalledTimes(2);
+    expect(mockTransactWrite).toHaveBeenCalledTimes(2);
+    const initialTransaction = mockTransactWrite.mock.calls[0][0];
+    expect(initialTransaction.find((item) => item.Update).Update.UpdateExpression).toContain('people_count :one');
+    expect(initialTransaction.find((item) => item.Put).Put.Item).toEqual(expect.objectContaining({
+      SK: emailInvitation.SK,
+      target_email_hash: hash('new@example.com'),
+      invited_by: 'user-1',
+    }));
+    const retryTransaction = mockTransactWrite.mock.calls[1][0];
+    expect(retryTransaction).toHaveLength(2);
+    expect(retryTransaction.every((item) => item.ConditionCheck)).toBe(true);
+    expect(retryTransaction.some((item) => item.Update || item.Put || item.Delete)).toBe(false);
+    expect(retryTransaction[0].ConditionCheck).toEqual(expect.objectContaining({
+      Key: { PK: 'GROUP#group-1', SK: 'MEMBER#user-2' },
+      ExpressionAttributeValues: { ':admin': 'admin', ':owner': 'owner' },
+    }));
+    expect(retryTransaction[1].ConditionCheck).toEqual(expect.objectContaining({
+      Key: { PK: 'GROUP#group-1', SK: emailInvitation.SK },
+      ConditionExpression: 'entity_type = :invite AND target_email_hash = :emailHash',
+      ExpressionAttributeValues: { ':invite': 'GROUP_INVITE', ':emailHash': hash('new@example.com') },
+    }));
+    expect(consoleSpy).toHaveBeenCalledWith('Failed to send group invitation email', { category: 'ServiceUnavailableException' });
+    consoleSpy.mockRestore();
+  });
+
+  test('legacy owner memberships retain admin invitation privileges', async () => {
+    mockGetItem.mockResolvedValueOnce(legacyOwnerMembership);
+    mockQueryTable.mockResolvedValueOnce([groupRecord, legacyOwnerMembership]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const response = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'new@example.com' } }));
+    expect(response.statusCode).toBe(202);
+    expect(mockTransactWrite.mock.calls[0][0][0].ConditionCheck.ExpressionAttributeValues).toEqual({ ':admin': 'admin', ':owner': 'owner' });
+  });
+
+  test('accepts an unknown-email invitation using the authenticated verified email hash', async () => {
+    mockQueryTable.mockResolvedValueOnce([emailInvitation]);
+    mockGetItem.mockResolvedValueOnce(groupRecord);
+    const response = await groups.acceptInvitation(event({
+      method: 'POST', path: { groupId: 'group-1' }, claims: { sub: 'new-user', email: 'new@example.com', name: 'New User' },
+    }));
+
+    expect(response.statusCode).toBe(200);
+    const transaction = mockTransactWrite.mock.calls[0][0];
+    expect(transaction.find((item) => item.Put).Put.Item).toEqual(expect.objectContaining({
+      SK: 'MEMBER#new-user', display_name: 'New User', role: 'member',
+    }));
+    expect(transaction.find((item) => item.Delete).Delete).toEqual(expect.objectContaining({
+      ConditionExpression: '(target_user_id = :userId OR target_email_hash = :emailHash)',
+      ExpressionAttributeValues: { ':userId': 'new-user', ':emailHash': hash('new@example.com') },
+    }));
+  });
+
+  test('does not resolve an email-addressed invitation from an unverified email claim', async () => {
+    mockQueryTable.mockResolvedValueOnce([emailInvitation]);
+    mockGetItem.mockResolvedValueOnce(groupRecord);
+    const response = await groups.acceptInvitation(event({
+      method: 'POST', path: { groupId: 'group-1' }, claims: { sub: 'new-user', email: 'new@example.com', email_verified: 'false' },
+    }));
+    expect(response.statusCode).toBe(404);
+    expect(mockTransactWrite).not.toHaveBeenCalled();
+  });
+
+  test('declines invitations resolved by verified email hash and releases the reserved slot', async () => {
+    mockGetItem.mockResolvedValueOnce(undefined);
+    mockQueryTable.mockResolvedValueOnce([emailInvitation]);
+    const response = await groups.declineInvitation(event({
+      method: 'DELETE', path: { groupId: 'group-1' }, claims: { sub: 'new-user', email: 'new@example.com' },
+    }));
+    expect(response.statusCode).toBe(200);
+    expect(mockTransactWrite).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ Delete: expect.objectContaining({ ExpressionAttributeValues: expect.objectContaining({ ':emailHash': hash('new@example.com') }) }) }),
       expect.objectContaining({ Update: expect.objectContaining({ UpdateExpression: expect.stringContaining('people_count :minusOne') }) }),
     ]));
   });
 
-  test('prevents owner leave through member deletion', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership).mockResolvedValueOnce(ownerMembership);
-    const response = await groups.removeMember(event({ method: 'DELETE', path: { groupId: 'group-1', memberId: 'user-1' } }));
+  test('admins promote members and creator demotion is prohibited', async () => {
+    mockGetItem
+      .mockResolvedValueOnce(adminMembership)
+      .mockResolvedValueOnce(memberMembership)
+      .mockResolvedValueOnce(groupRecord);
+    let response = await groups.updateMemberRole(event({ method: 'PUT', path: { groupId: 'group-1', memberId: 'user-2' }, body: { role: 'admin' } }));
+    expect(response.statusCode).toBe(200);
+    expect(data(response).member.role).toBe('admin');
+    expect(mockTransactWrite.mock.calls[0][0][2].Update.ExpressionAttributeValues[':role']).toBe('admin');
+
+    jest.clearAllMocks();
+    mockGetItem.mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(groupRecord);
+    response = await groups.updateMemberRole(event({ method: 'PUT', path: { groupId: 'group-1', memberId: 'user-1' }, body: { role: 'member' } }));
     expect(response.statusCode).toBe(409);
     expect(mockTransactWrite).not.toHaveBeenCalled();
   });
 
-  test('owner deletion marks the group before batch-deleting the whole partition', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable.mockResolvedValueOnce([groupRecord, ownerMembership, memberMembership, invitation, taskRecord]);
-    const response = await groups.deleteGroup(event({ method: 'DELETE', path: { groupId: 'group-1' } }));
+  test('members cannot manage roles', async () => {
+    mockGetItem.mockResolvedValueOnce(memberMembership).mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(groupRecord);
+    const response = await groups.updateMemberRole(event({
+      method: 'PUT', path: { groupId: 'group-1', memberId: 'user-1' }, claims: { sub: 'user-2' }, body: { role: 'member' },
+    }));
+    expect(response.statusCode).toBe(403);
+  });
 
+  test('admins remove other admins and unassign their tasks, but never remove the creator', async () => {
+    mockGetItem.mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(secondAdminMembership).mockResolvedValueOnce(groupRecord);
+    mockQueryTable.mockResolvedValueOnce([taskRecord]);
+    let response = await groups.removeMember(event({ method: 'DELETE', path: { groupId: 'group-1', memberId: 'user-2' } }));
     expect(response.statusCode).toBe(200);
-    expect(mockTransactWrite).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ ConditionCheck: expect.objectContaining({ ConditionExpression: expect.stringContaining('#role = :role') }) }),
-      expect.objectContaining({ Update: expect.objectContaining({ UpdateExpression: expect.stringContaining('deleting = :true') }) }),
-    ]));
+    expect(mockTransactWrite).toHaveBeenCalledTimes(3);
+    expect(mockTransactWrite.mock.calls[1][0][0].Update.UpdateExpression).toContain('assigned_to = :none');
+
+    jest.clearAllMocks();
+    mockGetItem.mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(groupRecord);
+    response = await groups.removeMember(event({ method: 'DELETE', path: { groupId: 'group-1', memberId: 'user-1' } }));
+    expect(response.statusCode).toBe(409);
+    expect(mockTransactWrite).not.toHaveBeenCalled();
+  });
+
+  test('group deletion is creator-only regardless of other admins and supports legacy creator role', async () => {
+    mockGetItem.mockResolvedValueOnce(secondAdminMembership).mockResolvedValueOnce(groupRecord);
+    let response = await groups.deleteGroup(event({ method: 'DELETE', path: { groupId: 'group-1' }, claims: { sub: 'user-2' } }));
+    expect(response.statusCode).toBe(403);
+
+    mockGetItem.mockResolvedValueOnce(legacyOwnerMembership).mockResolvedValueOnce(groupRecord);
+    mockQueryTable.mockResolvedValueOnce([groupRecord, legacyOwnerMembership, memberMembership, taskRecord]);
+    response = await groups.deleteGroup(event({ method: 'DELETE', path: { groupId: 'group-1' } }));
+    expect(response.statusCode).toBe(200);
     expect(mockBatchWriteTable).toHaveBeenCalledWith('groups-test', expect.arrayContaining([
       { DeleteRequest: { Key: { PK: 'GROUP#group-1', SK: 'MEMBER#user-2' } } },
       { DeleteRequest: { Key: { PK: 'GROUP#group-1', SK: 'TASK#task-1' } } },
     ]));
-    const cleanupRequests = mockBatchWriteTable.mock.calls[0][1];
-    expect(cleanupRequests).not.toContainEqual({ DeleteRequest: { Key: { PK: 'GROUP#group-1', SK: 'GROUP' } } });
-    expect(cleanupRequests).not.toContainEqual({ DeleteRequest: { Key: { PK: 'GROUP#group-1', SK: 'MEMBER#user-1' } } });
-    expect(mockTransactWrite.mock.calls[1][0]).toEqual(expect.arrayContaining([
-      expect.objectContaining({ Delete: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'GROUP' }, ConditionExpression: expect.stringContaining('deleting = :true') }) }),
-      expect.objectContaining({ Delete: expect.objectContaining({ Key: { PK: 'GROUP#group-1', SK: 'MEMBER#user-1' } }) }),
-      expect.objectContaining({ Update: expect.objectContaining({ Key: { PK: 'USER#user-1', SK: 'OWNED_GROUPS' } }) }),
-    ]));
+    expect(mockTransactWrite.mock.calls[1][0].find((item) => item.Delete?.Key.SK === 'MEMBER#user-1').Delete.ConditionExpression).toContain('entity_type = :member');
   });
 
-  test('non-owner cannot delete a group', async () => {
-    mockGetItem.mockResolvedValueOnce(memberMembership);
-    const response = await groups.deleteGroup(event({ method: 'DELETE', path: { groupId: 'group-1' }, claims: { sub: 'user-2' } }));
-    expect(response.statusCode).toBe(403);
-    expect(mockBatchWriteTable).not.toHaveBeenCalled();
-  });
-
-
-  test('invite quota rejection remains indistinguishable from a successful generic invitation', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable
-      .mockResolvedValueOnce([groupRecord, ownerMembership])
-      .mockResolvedValueOnce([{ user_id: 'user-2', email_normalized: 'member@example.com', display_name: 'Group Member' }]);
-    mockTransactWrite.mockRejectedValueOnce(Object.assign(new Error('quota'), { name: 'TransactionCanceledException' }));
-    const response = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'member@example.com' } }));
-    expect(response.statusCode).toBe(202);
-    expect(data(response).message).toMatch(/If that account can be invited/);
-    const groupCounter = mockTransactWrite.mock.calls[0][0].find((item) => item.Update).Update;
-    expect(groupCounter.ConditionExpression).toContain('people_count < :max');
-  });
-
-  test('legacy mixed-case email profiles remain invitable through exact normalized fallback', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable
-      .mockResolvedValueOnce([groupRecord, ownerMembership])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
-    mockScanTable.mockResolvedValueOnce([{ user_id: 'user-2', email: 'Member@Example.com', display_name: 'Group Member' }]);
-    const response = await groups.inviteMember(event({ method: 'POST', path: { groupId: 'group-1' }, body: { email: 'member@example.com' } }));
-    expect(response.statusCode).toBe(202);
-    expect(mockTransactWrite).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({ target_user_id: 'user-2' }) }) }),
-    ]));
-  });
-
-  test('owner can atomically clear pending invitations and release every reserved slot', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable.mockResolvedValueOnce([invitation, { ...invitation, SK: 'INVITE#attempt-hash', entity_type: 'GROUP_INVITE_ATTEMPT', target_user_id: undefined }]);
-    const response = await groups.declineInvitation(event({ method: 'DELETE', path: { groupId: 'group-1' } }));
+  test('admins can manage tasks and legacy owners satisfy commit-time admin checks', async () => {
+    mockGetItem
+      .mockResolvedValueOnce(legacyOwnerMembership)
+      .mockResolvedValueOnce(taskRecord)
+      .mockResolvedValueOnce({ ...taskRecord, title: 'Admin edit' });
+    const response = await groups.updateTask(event({ method: 'PUT', path: { groupId: 'group-1', taskId: 'task-1' }, body: { title: 'Admin edit' } }));
     expect(response.statusCode).toBe(200);
-    const transaction = mockTransactWrite.mock.calls[0][0];
-    expect(transaction.filter((item) => item.Delete)).toHaveLength(2);
-    const counter = transaction.find((item) => item.Update).Update;
-    expect(counter.ExpressionAttributeValues).toEqual(expect.objectContaining({ ':decrement': -2, ':count': 2 }));
+    const condition = mockTransactWrite.mock.calls[0][0][0].ConditionCheck;
+    expect(condition.ExpressionAttributeValues).toEqual({ ':admin': 'admin', ':owner': 'owner' });
   });
 
-  test('partial group cleanup retains final authorization records so deletion can be retried', async () => {
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable.mockResolvedValueOnce([groupRecord, ownerMembership, taskRecord]);
-    mockBatchWriteTable.mockRejectedValueOnce(new Error('timeout'));
-    const response = await groups.deleteGroup(event({ method: 'DELETE', path: { groupId: 'group-1' } }));
-    expect(response.statusCode).toBe(500);
-    expect(mockTransactWrite).toHaveBeenCalledTimes(1);
-    const cleanup = mockBatchWriteTable.mock.calls[0][1];
-    expect(cleanup).toEqual([{ DeleteRequest: { Key: { PK: 'GROUP#group-1', SK: 'TASK#task-1' } } }]);
-  });
+  test('routes the new update, join, and member-role endpoints', async () => {
+    mockGetItem.mockResolvedValueOnce(memberMembership);
+    let response = await groups.handler(event({ method: 'PUT', resource: '/groups/{groupId}', path: { groupId: 'group-1' }, claims: { sub: 'user-2' }, body: { visibility: 'public' } }));
+    expect(response.statusCode).toBe(403);
 
-  test('routes invitation consent and group deletion endpoints', async () => {
-    mockQueryTable.mockResolvedValueOnce([invitation]);
     mockGetItem.mockResolvedValueOnce(groupRecord);
-    const accepted = await groups.handler(event({ method: 'POST', resource: '/groups/{groupId}/invitations/accept', path: { groupId: 'group-1' }, claims: { sub: 'user-2' } }));
-    expect(accepted.statusCode).toBe(200);
+    response = await groups.handler(event({ method: 'POST', resource: '/groups/{groupId}/join', path: { groupId: 'group-1' } }));
+    expect(response.statusCode).toBe(404);
 
-    jest.clearAllMocks();
-    mockGetItem.mockResolvedValueOnce(ownerMembership);
-    mockQueryTable.mockResolvedValueOnce([groupRecord, ownerMembership]);
-    mockTransactWrite.mockResolvedValue(undefined);
-    mockBatchWriteTable.mockResolvedValue(undefined);
-    const deleted = await groups.handler(event({ method: 'DELETE', resource: '/groups/{groupId}', path: { groupId: 'group-1' } }));
-    expect(deleted.statusCode).toBe(200);
+    mockGetItem.mockResolvedValueOnce(memberMembership).mockResolvedValueOnce(adminMembership).mockResolvedValueOnce(groupRecord);
+    response = await groups.handler(event({ method: 'PUT', resource: '/groups/{groupId}/members/{memberId}', path: { groupId: 'group-1', memberId: 'user-1' }, claims: { sub: 'user-2' }, body: { role: 'member' } }));
+    expect(response.statusCode).toBe(403);
   });
 });

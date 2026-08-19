@@ -1,5 +1,6 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   CalendarClock,
@@ -7,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Crown,
+  Globe2,
   LoaderCircle,
   LockKeyhole,
   Mail,
@@ -21,7 +23,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { groupsApi } from '../services/api';
-import type { CollaborativeGroup, GroupInvitation, GroupMember, GroupSummary, GroupTask } from '../types/api';
+import type { CollaborativeGroup, GroupInvitation, GroupMember, GroupRole, GroupSummary, GroupTask, GroupVisibility, PublicGroupSummary } from '../types/api';
+import { invalidateNotifications } from '../utils/notifications';
 
 const groupColors = [
   { value: '#2563eb', label: 'Blue' },
@@ -46,8 +49,11 @@ function toDateTimeLocal(date = new Date(Date.now() + 24 * 60 * 60 * 1000)) {
 
 function Groups() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedGroupId = searchParams.get('group') || '';
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [invitations, setInvitations] = useState<GroupInvitation[]>([]);
+  const [publicGroups, setPublicGroups] = useState<PublicGroupSummary[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [group, setGroup] = useState<CollaborativeGroup | null>(null);
   const [listLoading, setListLoading] = useState(true);
@@ -56,19 +62,22 @@ function Groups() {
   const [detailError, setDetailError] = useState('');
   const [taskActionError, setTaskActionError] = useState('');
   const [invitationError, setInvitationError] = useState('');
+  const [publicGroupError, setPublicGroupError] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [createError, setCreateError] = useState('');
   const [taskError, setTaskError] = useState('');
   const [busyAction, setBusyAction] = useState('');
-  const [mobileView, setMobileView] = useState<'tasks' | 'people'>('tasks');
+  const [activeView, setActiveView] = useState<'tasks' | 'people'>('tasks');
   const [memberEmail, setMemberEmail] = useState('');
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
-  const [groupForm, setGroupForm] = useState({ name: '', description: '', color: groupColors[0].value });
+  const [groupForm, setGroupForm] = useState<{ name: string; description: string; color: string; visibility: GroupVisibility }>({ name: '', description: '', color: groupColors[0].value, visibility: 'private' });
   const [taskForm, setTaskForm] = useState({ title: '', description: '', deadline: toDateTimeLocal(), assignedTo: '' });
   const detailSequence = useRef(0);
   const selectedIdRef = useRef('');
+  const taskTabRef = useRef<HTMLButtonElement>(null);
+  const peopleTabRef = useRef<HTMLButtonElement>(null);
   selectedIdRef.current = selectedId;
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -83,6 +92,7 @@ function Groups() {
       const nextGroups = response.data.data.groups || [];
       setGroups(nextGroups);
       setInvitations(response.data.data.invitations || []);
+      setPublicGroups(response.data.data.public_groups || []);
       setSelectedId((current) => {
         const candidate = preferredId || current;
         return nextGroups.some((item) => item.group_id === candidate) ? candidate : nextGroups[0]?.group_id || '';
@@ -114,9 +124,14 @@ function Groups() {
     }
   };
 
-  useEffect(() => { void loadGroups(); }, []);
+  useEffect(() => { void loadGroups(requestedGroupId || undefined); }, []);
   useEffect(() => {
-    setMobileView('tasks');
+    if (requestedGroupId && groups.some((item) => item.group_id === requestedGroupId)) {
+      setSelectedId(requestedGroupId);
+    }
+  }, [groups, requestedGroupId]);
+  useEffect(() => {
+    setActiveView('tasks');
     setTaskActionError('');
     setMemberError('');
     setMemberSuccess('');
@@ -179,9 +194,31 @@ function Groups() {
 
   const memberNames = useMemo(() => new Map(group?.members.map((member) => [member.user_id, member.display_name]) || []), [group?.members]);
   const currentMember = group?.members.find((member) => member.user_id === user?.sub);
-  const isOwner = currentMember?.role === 'owner';
+  const isGroupAdmin = currentMember?.role === 'admin';
+  const isCreator = group?.owner_id === user?.sub;
   const openTaskCount = group?.tasks.filter((task) => task.status !== 'completed').length || 0;
   const anyActionBusy = Boolean(busyAction);
+
+  const activateTab = (view: 'tasks' | 'people', focus = false) => {
+    setActiveView(view);
+    if (focus) {
+      window.requestAnimationFrame(() => {
+        (view === 'tasks' ? taskTabRef.current : peopleTabRef.current)?.focus();
+      });
+    }
+  };
+
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    let nextView: 'tasks' | 'people' | null = null;
+    if (event.key === 'Home') nextView = 'tasks';
+    else if (event.key === 'End') nextView = 'people';
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      nextView = activeView === 'tasks' ? 'people' : 'tasks';
+    }
+    if (!nextView) return;
+    event.preventDefault();
+    activateTab(nextView, true);
+  };
 
   const createGroup = async (event: FormEvent) => {
     event.preventDefault();
@@ -194,7 +231,7 @@ function Groups() {
       setSelectedId(created.group_id);
       setGroup(created);
       setCreateOpen(false);
-      setGroupForm({ name: '', description: '', color: groupColors[0].value });
+      setGroupForm({ name: '', description: '', color: groupColors[0].value, visibility: 'private' });
     } catch (createGroupError) {
       setCreateError(errorMessage(createGroupError));
     } finally {
@@ -213,7 +250,7 @@ function Groups() {
       await groupsApi.sendInvitation(groupId, memberEmail.trim());
       if (selectedIdRef.current !== groupId) return;
       setMemberEmail('');
-      setMemberSuccess('Invitation sent if this email belongs to an account. They will join only after accepting.');
+      setMemberSuccess('If this address can be invited, the invitation was saved. Email delivery was attempted but is not guaranteed. They join only after accepting.');
     } catch (inviteError) {
       if (selectedIdRef.current === groupId) setMemberError(errorMessage(inviteError));
     } finally {
@@ -228,14 +265,68 @@ function Groups() {
       setInvitationError('');
       if (accept) {
         await groupsApi.acceptInvitation(invitation.group_id);
+        invalidateNotifications();
         setInvitations((current) => current.filter((item) => item.group_id !== invitation.group_id));
         await loadGroups(invitation.group_id);
       } else {
         await groupsApi.declineInvitation(invitation.group_id);
+        invalidateNotifications();
         setInvitations((current) => current.filter((item) => item.group_id !== invitation.group_id));
       }
     } catch (respondError) {
       setInvitationError(errorMessage(respondError));
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const joinPublicGroup = async (publicGroup: PublicGroupSummary) => {
+    try {
+      setBusyAction(`join-${publicGroup.group_id}`);
+      setPublicGroupError('');
+      await groupsApi.join(publicGroup.group_id);
+      invalidateNotifications();
+      await loadGroups(publicGroup.group_id);
+    } catch (joinError) {
+      setPublicGroupError(errorMessage(joinError));
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const updateVisibility = async (visibility: GroupVisibility) => {
+    if (!group || !isGroupAdmin || group.visibility === visibility) return;
+    const groupId = group.group_id;
+    try {
+      setBusyAction('update-visibility');
+      setMemberError('');
+      await groupsApi.update(groupId, { visibility });
+      setGroup((current) => current?.group_id === groupId ? { ...current, visibility } : current);
+      setGroups((current) => current.map((item) => item.group_id === groupId ? { ...item, visibility } : item));
+      await loadGroups(groupId);
+    } catch (visibilityError) {
+      if (selectedIdRef.current === groupId) setMemberError(errorMessage(visibilityError));
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const updateMemberRole = async (member: GroupMember, role: GroupRole) => {
+    if (!group || !isGroupAdmin || member.user_id === group.owner_id || member.role === role) return;
+    const groupId = group.group_id;
+    try {
+      setBusyAction(`role-${member.user_id}`);
+      setMemberError('');
+      setMemberSuccess('');
+      await groupsApi.updateMemberRole(groupId, member.user_id, role);
+      const updatedMember = { ...member, role };
+      setGroup((current) => current?.group_id === groupId ? {
+        ...current,
+        members: current.members.map((item) => item.user_id === member.user_id ? updatedMember : item),
+      } : current);
+      setMemberSuccess(`${member.display_name} is now ${role === 'admin' ? 'an Admin' : 'a Member'}.`);
+    } catch (roleError) {
+      if (selectedIdRef.current === groupId) setMemberError(errorMessage(roleError));
     } finally {
       setBusyAction('');
     }
@@ -267,6 +358,7 @@ function Groups() {
       setMemberError('');
       setMemberSuccess('');
       await groupsApi.removeMember(groupId, member.user_id);
+      invalidateNotifications();
       if (leaving) {
         const remaining = groups.filter((item) => item.group_id !== groupId);
         setGroups(remaining);
@@ -292,6 +384,7 @@ function Groups() {
       setBusyAction('delete-group');
       setMemberError('');
       await groupsApi.delete(groupId);
+      invalidateNotifications();
       const remaining = groups.filter((item) => item.group_id !== groupId);
       setGroups(remaining);
       setSelectedId(remaining[0]?.group_id || '');
@@ -316,6 +409,7 @@ function Groups() {
         assigned_to: taskForm.assignedTo || null,
       });
       const task = response.data.data.task;
+      invalidateNotifications();
       setGroup((current) => current?.group_id === groupId ? {
         ...current,
         tasks: [...current.tasks, task].sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()),
@@ -337,6 +431,7 @@ function Groups() {
       setTaskActionError('');
       const status = task.status === 'completed' ? 'not_started' : 'completed';
       const response = await groupsApi.updateTask(groupId, task.task_id, { status });
+      invalidateNotifications();
       setGroup((current) => current?.group_id === groupId ? {
         ...current,
         tasks: current.tasks.map((item) => item.task_id === task.task_id ? response.data.data.task : item),
@@ -356,6 +451,7 @@ function Groups() {
       setBusyAction(`assign-${task.task_id}`);
       setTaskActionError('');
       const response = await groupsApi.updateTask(groupId, task.task_id, { assigned_to: assignedTo || null });
+      invalidateNotifications();
       setGroup((current) => current?.group_id === groupId ? {
         ...current,
         tasks: current.tasks.map((item) => item.task_id === task.task_id ? response.data.data.task : item),
@@ -374,6 +470,7 @@ function Groups() {
       setBusyAction(`delete-task-${task.task_id}`);
       setTaskActionError('');
       await groupsApi.deleteTask(groupId, task.task_id);
+      invalidateNotifications();
       setGroup((current) => current?.group_id === groupId ? {
         ...current,
         tasks: current.tasks.filter((item) => item.task_id !== task.task_id),
@@ -390,7 +487,7 @@ function Groups() {
       <header className="page-header groups-page-header">
         <div>
           <h1 className="page-title">Groups</h1>
-          <p className="page-subtitle">Create a private group, invite classmates, and track who is doing what.</p>
+          <p className="page-subtitle">Create private or public groups, collaborate with classmates, and track who is doing what.</p>
         </div>
         {!listLoading && !listError && groups.length > 0 && (
           <button type="button" className="btn-primary inline-flex items-center justify-center gap-2" onClick={openCreate}>
@@ -435,6 +532,39 @@ function Groups() {
         </section>
       )}
 
+      {!listLoading && !listError && (
+        <section className="section-card public-groups" aria-labelledby="public-groups-heading">
+          <div className="public-groups-header">
+            <div>
+              <h2 id="public-groups-heading" className="section-title">Discover public groups</h2>
+              <p className="mt-1 text-sm text-gray-500">Browse open groups and join instantly. Private groups remain invitation-only.</p>
+            </div>
+            <Globe2 size={20} className="text-gray-400" aria-hidden="true" />
+          </div>
+          {publicGroupError && <p className="mt-3 text-sm font-medium text-red-600" role="alert">{publicGroupError}</p>}
+          {publicGroups.length === 0 ? (
+            <p className="public-groups-empty">There are no public groups available to join right now.</p>
+          ) : (
+            <div className="public-groups-grid">
+              {publicGroups.map((item) => {
+                const joining = busyAction === `join-${item.group_id}`;
+                return (
+                  <article key={item.group_id} className="public-group-card" style={{ '--group-color': item.color } as CSSProperties}>
+                    <span className="public-group-mark"><Globe2 size={18} /></span>
+                    <div className="min-w-0 flex-1">
+                      <h3>{item.name}</h3>
+                      {item.description && <p>{item.description}</p>}
+                      {item.people_count != null && <small>{item.people_count} occupied {item.people_count === 1 ? 'slot' : 'slots'}</small>}
+                    </div>
+                    <button type="button" className="btn-secondary" disabled={anyActionBusy} onClick={() => void joinPublicGroup(item)}>{joining ? 'Joining…' : 'Join group'}</button>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
       {listLoading ? (
         <div aria-live="polite" aria-busy="true">
           <p className="mb-3 text-sm font-medium text-gray-500">Loading your groups…</p>
@@ -454,7 +584,7 @@ function Groups() {
             <div className="relative">
               <span className="group-picker-color" style={{ backgroundColor: groups.find((item) => item.group_id === selectedId)?.color }} />
               <select id="current-group" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-                {groups.map((item) => <option key={item.group_id} value={item.group_id}>{item.name}{item.role === 'owner' ? ' — you manage' : ''}</option>)}
+                {groups.map((item) => <option key={item.group_id} value={item.group_id}>{item.name} — {item.role === 'admin' ? 'Admin' : 'Member'}</option>)}
               </select>
               <ChevronDown size={18} aria-hidden="true" />
             </div>
@@ -466,7 +596,7 @@ function Groups() {
               {groups.map((item) => (
                 <button key={item.group_id} type="button" className={`group-list-item ${selectedId === item.group_id ? 'group-list-item-active' : ''}`} onClick={() => setSelectedId(item.group_id)}>
                   <span className="h-10 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="min-w-0 text-left"><strong className="block truncate text-sm">{item.name}</strong><small className="block truncate text-gray-500">{item.role === 'owner' ? 'You manage this group' : 'Member'}</small></span>
+                  <span className="min-w-0 text-left"><strong className="block truncate text-sm">{item.name}</strong><small className="block truncate text-gray-500">{item.role === 'admin' ? 'Admin' : 'Member'} · {item.visibility === 'public' ? 'Public' : 'Private'}</small></span>
                 </button>
               ))}
             </div>
@@ -485,25 +615,54 @@ function Groups() {
             ) : group ? (
               <section className="space-y-4">
                 <div className="group-summary" style={{ '--group-color': group.color } as CSSProperties}>
-                  <div className="group-summary-icon"><LockKeyhole size={21} /></div>
+                  <div className="group-summary-icon">{group.visibility === 'public' ? <Globe2 size={21} /> : <LockKeyhole size={21} />}</div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-500">
-                      <span>Private group</span><span aria-hidden="true">•</span><span>{isOwner ? 'You manage this group' : 'You are a member'}</span>
+                      <span>{group.visibility === 'public' ? 'Public group' : 'Private group'}</span><span aria-hidden="true">•</span><span>{isGroupAdmin ? 'Admin' : 'Member'}</span>{isCreator && <><span aria-hidden="true">•</span><span>Creator</span></>}
                     </div>
                     <h2>{group.name}</h2>
                     {group.description && <p>{group.description}</p>}
                   </div>
-                  <button type="button" className="group-people-shortcut lg:hidden" onClick={() => setMobileView('people')}><UsersRound size={17} /> {group.members.length} people</button>
-                  <div className="hidden text-right lg:block"><strong className="block text-lg">{group.members.length}</strong><span className="text-xs text-gray-500">people</span></div>
+                  {isGroupAdmin ? (
+                    <label className="group-visibility-toggle">
+                      <span><strong>Public access</strong><small>{group.visibility === 'public' ? 'Anyone can discover and join' : 'Invitation only'}</small></span>
+                      <input type="checkbox" role="switch" checked={group.visibility === 'public'} disabled={anyActionBusy} onChange={(event) => void updateVisibility(event.target.checked ? 'public' : 'private')} aria-label={`Make ${group.name} public`} />
+                      <i aria-hidden="true" />
+                    </label>
+                  ) : (
+                    <div className="group-people-count"><strong>{group.members.length}</strong><span>people</span></div>
+                  )}
                 </div>
 
-                <div className="group-mobile-tabs lg:hidden" aria-label="Choose group section">
-                  <button type="button" aria-pressed={mobileView === 'tasks'} className={mobileView === 'tasks' ? 'group-tab-active' : ''} onClick={() => setMobileView('tasks')}>Tasks <span>{openTaskCount}</span></button>
-                  <button type="button" aria-pressed={mobileView === 'people'} className={mobileView === 'people' ? 'group-tab-active' : ''} onClick={() => setMobileView('people')}>People <span>{group.members.length}</span></button>
+                <div className="group-mobile-tabs" role="tablist" aria-label="Choose group section">
+                  <button
+                    ref={taskTabRef}
+                    id="group-tasks-tab"
+                    type="button"
+                    role="tab"
+                    aria-selected={activeView === 'tasks'}
+                    aria-controls="group-tasks-panel"
+                    tabIndex={activeView === 'tasks' ? 0 : -1}
+                    className={activeView === 'tasks' ? 'group-tab-active' : ''}
+                    onClick={() => activateTab('tasks')}
+                    onKeyDown={handleTabKeyDown}
+                  >Tasks <span>{openTaskCount}</span></button>
+                  <button
+                    ref={peopleTabRef}
+                    id="group-people-tab"
+                    type="button"
+                    role="tab"
+                    aria-selected={activeView === 'people'}
+                    aria-controls="group-people-panel"
+                    tabIndex={activeView === 'people' ? 0 : -1}
+                    className={activeView === 'people' ? 'group-tab-active' : ''}
+                    onClick={() => activateTab('people')}
+                    onKeyDown={handleTabKeyDown}
+                  >People <span>{group.members.length}</span></button>
                 </div>
 
-                <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
-                  <section className={`${mobileView === 'tasks' ? 'block' : 'hidden'} section-card p-0 lg:block`} aria-labelledby="group-tasks-heading">
+                <div>
+                  <section id="group-tasks-panel" role="tabpanel" tabIndex={0} hidden={activeView !== 'tasks'} className="section-card p-0" aria-labelledby="group-tasks-tab">
                     <div className="group-section-header">
                       <div><h3 id="group-tasks-heading" className="section-title">Tasks</h3><p className="mt-1 text-sm text-gray-500">{openTaskCount === 0 ? 'Everything is done' : `${openTaskCount} ${openTaskCount === 1 ? 'task' : 'tasks'} left`}</p></div>
                       {group.tasks.length > 0 && <button type="button" className="btn-primary inline-flex items-center gap-2" onClick={openTask}><Plus size={17} /> Add task</button>}
@@ -514,14 +673,14 @@ function Groups() {
                     ) : (
                       <div className="divide-y" style={{ borderColor: 'var(--app-border)' }}>
                         {group.tasks.map((task) => {
-                          const canManage = isOwner || task.created_by === user?.sub;
+                          const canManage = isGroupAdmin || task.created_by === user?.sub;
                           const canUpdate = canManage || task.assigned_to === user?.sub;
                           const canDelete = canManage;
                           const updating = busyAction === `toggle-${task.task_id}`;
                           const assigning = busyAction === `assign-${task.task_id}`;
                           const deleting = busyAction === `delete-task-${task.task_id}`;
                           const overdue = task.status !== 'completed' && new Date(task.deadline).getTime() < Date.now();
-                          const permissionText = 'Only the assigned person, task creator, or group manager can mark this complete.';
+                          const permissionText = 'Only the assigned person, task creator, or group Admin can mark this complete.';
                           return (
                             <article key={task.task_id} className={`group-task-row ${task.status === 'completed' ? 'group-task-complete' : ''}`}>
                               {canUpdate ? (
@@ -532,18 +691,20 @@ function Groups() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2"><h4 className={task.status === 'completed' ? 'line-through' : ''}>{task.title}</h4>{overdue && <span className="status-pill status-red">Overdue</span>}{task.status === 'in_progress' && <span className="status-pill status-blue">In progress</span>}</div>
                                 {task.description && <p className="mt-1 line-clamp-2 text-sm leading-5 text-gray-500">{task.description}</p>}
-                                <div className="group-task-meta">
-                                  <span><CalendarClock size={13} /> {new Date(task.deadline).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                                <div className="group-task-assignment-row">
+                                  <span className="group-task-assignment-label">Assigned to</span>
                                   {canManage ? (
-                                    <label className="group-task-assignee">
-                                      <span>Assigned to</span>
-                                      <select value={task.assigned_to || ''} disabled={anyActionBusy} onChange={(event) => void assignTask(task, event.target.value)} aria-label={`Assign ${task.title}`}>
+                                    <div className="group-task-assignment-control">
+                                      <select id={`task-assignee-${task.task_id}`} value={task.assigned_to || ''} disabled={anyActionBusy} onChange={(event) => void assignTask(task, event.target.value)} aria-label={`Assign ${task.title}`}>
                                         <option value="">No one yet</option>
                                         {group.members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user?.sub ? ' (me)' : ''}</option>)}
                                       </select>
-                                      {assigning && <LoaderCircle className="animate-spin" size={13} aria-label="Saving assignment" />}
-                                    </label>
-                                  ) : <span>{task.assigned_to ? `Assigned to ${memberNames.get(task.assigned_to) || 'Group member'}` : 'No one assigned yet'}</span>}
+                                      {assigning && <LoaderCircle className="animate-spin" size={15} aria-label="Saving assignment" />}
+                                    </div>
+                                  ) : <strong>{task.assigned_to ? memberNames.get(task.assigned_to) || 'Group member' : 'No one yet'}</strong>}
+                                </div>
+                                <div className="group-task-meta">
+                                  <span><CalendarClock size={13} /> {new Date(task.deadline).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
                                   <span>Added by {task.created_by_name}</span>
                                 </div>
                                 {!canUpdate && <p className="group-task-permission">View only · {permissionText}</p>}
@@ -556,16 +717,28 @@ function Groups() {
                     )}
                   </section>
 
-                  <aside className={`${mobileView === 'people' ? 'block' : 'hidden'} section-card lg:block`} aria-labelledby="group-people-heading">
+                  <section id="group-people-panel" role="tabpanel" tabIndex={0} hidden={activeView !== 'people'} className="section-card" aria-labelledby="group-people-tab">
                     <div className="mb-4 flex items-center justify-between"><div><h3 id="group-people-heading" className="section-title">People</h3><p className="mt-1 text-xs text-gray-500">{group.members.length} in this group</p></div><UsersRound size={18} className="text-gray-400" /></div>
                     <ul className="space-y-3">
                       {group.members.map((member) => {
                         const removing = busyAction === `remove-${member.user_id}`;
+                        const changingRole = busyAction === `role-${member.user_id}`;
+                        const creator = member.user_id === group.owner_id;
+                        const canAdministerMember = isGroupAdmin && !creator;
+                        const canLeave = member.user_id === user?.sub && !creator;
                         return (
                           <li key={member.user_id} className="group-member-row">
                             <span className="member-avatar" style={{ backgroundColor: group.color }}>{member.display_name[0]?.toUpperCase() || 'U'}</span>
-                            <span className="min-w-0 flex-1"><strong>{member.display_name}{member.role === 'owner' && <Crown size={13} className="text-amber-500" />}</strong><small>{member.role === 'owner' ? 'Group manager' : 'Member'}</small></span>
-                            {member.role !== 'owner' && isOwner && <button type="button" disabled={anyActionBusy} className="group-member-remove" onClick={() => void removeMember(member)}>{removing ? 'Removing…' : <><UserMinus size={14} /> Remove</>}</button>}
+                            <span className="min-w-0 flex-1"><strong>{member.display_name}{creator && <Crown size={13} className="text-amber-500" aria-label="Group creator" />}</strong><small>{member.role === 'admin' ? 'Admin' : 'Member'}{creator ? ' · Creator' : ''}</small></span>
+                            {canAdministerMember ? (
+                              <div className="group-member-actions">
+                                <label><span className="sr-only">Role for {member.display_name}</span><select value={member.role} disabled={anyActionBusy} onChange={(event) => void updateMemberRole(member, event.target.value as GroupRole)}><option value="member">Member</option><option value="admin">Admin</option></select></label>
+                                <button type="button" disabled={anyActionBusy} className="group-member-remove" onClick={() => void removeMember(member)}>{removing ? 'Removing…' : <><UserMinus size={14} /> {canLeave ? 'Leave' : 'Remove'}</>}</button>
+                                {changingRole && <LoaderCircle className="animate-spin text-gray-500" size={16} aria-label="Saving role" />}
+                              </div>
+                            ) : canLeave ? (
+                              <button type="button" disabled={anyActionBusy} className="group-member-remove" onClick={() => void removeMember(member)}>{removing ? 'Leaving…' : <><UserMinus size={14} /> Leave</>}</button>
+                            ) : null}
                           </li>
                         );
                       })}
@@ -574,11 +747,11 @@ function Groups() {
                     {memberError && <p className="group-member-message text-red-600" role="alert"><AlertCircle size={15} /> {memberError}</p>}
                     {memberSuccess && <p className="group-member-message text-green-700" role="status"><CheckCircle2 size={15} /> {memberSuccess}</p>}
 
-                    {isOwner && (
+                    {isGroupAdmin && (
                       <form className="group-invite-form" onSubmit={sendInvitation}>
                         <label htmlFor="member-email" className="field-label"><span className="inline-flex items-center gap-1.5"><UserPlus size={15} /> Classmate&apos;s account email</span></label>
                         <div className="relative"><Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} /><input id="member-email" required maxLength={254} type="email" className="input-field pl-9 text-sm" placeholder="student@example.com" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} /></div>
-                        <p className="form-help">Use the email they use for this app. For privacy, we will not confirm whether an email has an account.</p>
+                        <p className="form-help">If eligible, this saves an in-app invitation and attempts an email. Delivery is not guaranteed, and for privacy we will not confirm whether the address has an account.</p>
                         <button type="submit" disabled={anyActionBusy} className="btn-secondary mt-3 w-full">{busyAction === 'send-invitation' ? 'Sending…' : 'Send invitation'}</button>
                       </form>
                     )}
@@ -586,17 +759,15 @@ function Groups() {
                     <details className="group-options">
                       <summary><span><MoreHorizontal size={17} /> Group options</span><ChevronDown size={17} /></summary>
                       <div className="group-options-body">
-                        {isOwner ? (
+                        {isGroupAdmin ? (
                           <>
                             <button type="button" disabled={anyActionBusy} onClick={() => void clearPendingInvitations()}>{busyAction === 'clear-invitations' ? 'Cancelling…' : 'Cancel unaccepted invitations'}</button>
-                            <div className="group-danger-zone"><p>Danger zone</p><button type="button" disabled={anyActionBusy} onClick={() => void deleteGroup()}><Trash2 size={15} /> {busyAction === 'delete-group' ? 'Deleting group…' : 'Delete group'}</button></div>
+                            {isCreator && <div className="group-danger-zone"><p>Danger zone</p><button type="button" disabled={anyActionBusy} onClick={() => void deleteGroup()}><Trash2 size={15} /> {busyAction === 'delete-group' ? 'Deleting group…' : 'Delete group'}</button></div>}
                           </>
-                        ) : currentMember?.role === 'member' ? (
-                          <button type="button" disabled={anyActionBusy} className="text-red-600" onClick={() => void removeMember(currentMember)}>Leave this group</button>
                         ) : null}
                       </div>
                     </details>
-                  </aside>
+                  </section>
                 </div>
               </section>
             ) : null}
@@ -613,8 +784,17 @@ function Groups() {
                 {createError && <p className="text-sm font-medium text-red-600" role="alert">{createError}</p>}
                 <div><label htmlFor="group-name" className="field-label">Group name</label><input id="group-name" data-autofocus required maxLength={80} className="input-field" placeholder="e.g. Capstone project team" value={groupForm.name} onChange={(event) => setGroupForm({ ...groupForm, name: event.target.value })} /></div>
                 <div><label htmlFor="group-description" className="field-label">What are you working on? <span className="font-normal text-gray-400">Optional</span></label><textarea id="group-description" rows={3} maxLength={500} className="input-field resize-none" placeholder="e.g. Plan and deliver our final presentation" value={groupForm.description} onChange={(event) => setGroupForm({ ...groupForm, description: event.target.value })} /></div>
-                <fieldset><legend className="field-label">Group color <span className="font-normal text-gray-400">Optional</span></legend><div className="flex flex-wrap gap-3">{groupColors.map((color) => <button key={color.value} type="button" className={`color-choice ${groupForm.color === color.value ? 'color-choice-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.label}${groupForm.color === color.value ? ', selected' : ''}`} aria-pressed={groupForm.color === color.value} title={color.label} onClick={() => setGroupForm({ ...groupForm, color: color.value })}>{groupForm.color === color.value && <Check size={17} />}</button>)}</div></fieldset>
-                <div className="group-privacy-note"><LockKeyhole size={18} /><p><strong>Private by default</strong><span>Only people you invite can see this group after they accept.</span></p></div>
+                <fieldset><legend className="field-label"><span>Group color</span><span className="optional-label">Optional</span></legend><div className="flex flex-wrap gap-3">{groupColors.map((color) => <button key={color.value} type="button" className={`color-choice ${groupForm.color === color.value ? 'color-choice-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.label}${groupForm.color === color.value ? ', selected' : ''}`} aria-pressed={groupForm.color === color.value} title={color.label} onClick={() => setGroupForm({ ...groupForm, color: color.value })}>{groupForm.color === color.value && <Check size={17} />}</button>)}</div></fieldset>
+                <fieldset className="group-visibility-fieldset">
+                  <legend>Group visibility</legend>
+                  <label className="group-create-visibility">
+                    <span className="group-create-visibility-icon">{groupForm.visibility === 'public' ? <Globe2 size={18} /> : <LockKeyhole size={18} />}</span>
+                    <span className="min-w-0 flex-1"><strong>{groupForm.visibility === 'public' ? 'Public group' : 'Private group'}</strong><small>{groupForm.visibility === 'public' ? 'Anyone using the app can discover and join this group.' : 'Only invited people can see and join this group.'}</small></span>
+                    <input type="checkbox" role="switch" checked={groupForm.visibility === 'public'} onChange={(event) => setGroupForm({ ...groupForm, visibility: event.target.checked ? 'public' : 'private' })} aria-label="Public group" aria-describedby="group-visibility-help" />
+                    <i aria-hidden="true" />
+                  </label>
+                  <p id="group-visibility-help" className="form-help">Groups start private. You can change visibility later if you are an Admin.</p>
+                </fieldset>
               </div>
               <div className="modal-actions"><button type="button" className="btn-secondary" disabled={dialogBusyRef.current} onClick={() => setCreateOpen(false)}>Cancel</button><button type="submit" className="btn-primary min-w-32" disabled={dialogBusyRef.current}>{busyAction === 'create-group' ? <><LoaderCircle className="animate-spin" size={18} /> Creating…</> : 'Create group'}</button></div>
             </form>

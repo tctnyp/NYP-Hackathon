@@ -18,6 +18,7 @@ import {
 import type { Module, Task, TaskStatus } from '../types/api';
 import TaskForm from './TaskForm';
 import CalendarActions from './CalendarActions';
+import { invalidateNotifications } from '../utils/notifications';
 
 type TaskFilter = TaskStatus | 'all';
 type TaskSort = 'deadline' | 'priority' | 'newest';
@@ -136,6 +137,7 @@ function TaskList() {
       setFormError('');
       if (editingTask) await tasksApi.update(editingTask.task_id, data);
       else await tasksApi.create(data);
+      invalidateNotifications();
       setFormOpen(false);
       setEditingTask(undefined);
       await loadTasks();
@@ -159,6 +161,7 @@ function TaskList() {
       setUpdatingTaskId(task.task_id);
       setPageError('');
       const response = await tasksApi.update(task.task_id, { status, progress_percentage });
+      invalidateNotifications();
       const updatedTask = response.data.data.task;
       setTasks((current) => current
         .map((item) => item.task_id === task.task_id ? updatedTask : item)
@@ -177,6 +180,7 @@ function TaskList() {
       setDeletingTaskId(task.task_id);
       setPageError('');
       await tasksApi.delete(task.task_id);
+      invalidateNotifications();
       setTasks((current) => current.filter((item) => item.task_id !== task.task_id));
     } catch (deleteError) {
       console.error('Error deleting task:', deleteError);

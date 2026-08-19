@@ -74,7 +74,8 @@ export interface DashboardData {
 }
 
 
-export type GroupRole = 'owner' | 'member';
+export type GroupRole = 'admin' | 'member';
+export type GroupVisibility = 'public' | 'private';
 export type GroupTaskStatus = 'not_started' | 'in_progress' | 'completed';
 
 export interface GroupMember {
@@ -115,7 +116,34 @@ export interface GroupSummary {
   color: string;
   owner_id: string;
   role: GroupRole;
+  visibility: GroupVisibility;
   joined_at: string;
+}
+
+export interface PublicGroupSummary {
+  group_id: string;
+  name: string;
+  description: string;
+  color: string;
+  visibility: 'public';
+  people_count: number;
+}
+
+export interface GroupMutationResult {
+  group_id: string;
+  name: string;
+  description: string;
+  color: string;
+  owner_id: string;
+  visibility: GroupVisibility;
+  people_count: number;
+  task_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupJoinResult extends GroupMutationResult {
+  role: GroupRole;
 }
 
 export interface CollaborativeGroup extends Omit<GroupSummary, 'joined_at'> {

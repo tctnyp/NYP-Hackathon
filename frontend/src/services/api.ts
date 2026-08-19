@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { Task, Module, DashboardData, CollaborativeGroup, GroupInvitation, GroupSummary, GroupTask } from '../types/api';
+import type { Task, Module, DashboardData, CollaborativeGroup, GroupInvitation, GroupSummary, GroupTask, GroupRole, GroupVisibility, PublicGroupSummary, GroupMember, GroupJoinResult, GroupMutationResult } from '../types/api';
 import { tokenStorage, cognitoAuth } from './cognitoAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://your-api-url.com/dev';
@@ -102,17 +102,24 @@ export const modulesApi = {
 };
 
 export const groupsApi = {
-  getAll: () => apiClient.get<{ data: { groups: GroupSummary[]; invitations: GroupInvitation[] } }>('/groups'),
+  getAll: () => apiClient.get<{ data: { groups: GroupSummary[]; invitations: GroupInvitation[]; public_groups: PublicGroupSummary[] } }>('/groups'),
   getById: (id: string) => apiClient.get<{ data: { group: CollaborativeGroup } }>(`/groups/${id}`),
-  create: (data: { name: string; description?: string; color?: string }) => (
+  create: (data: { name: string; description?: string; color?: string; visibility: GroupVisibility }) => (
     apiClient.post<{ data: { group: CollaborativeGroup } }>('/groups', data)
   ),
+  update: (id: string, data: { visibility: GroupVisibility }) => (
+    apiClient.put<{ data: { group: GroupMutationResult } }>(`/groups/${id}`, data)
+  ),
+  join: (id: string) => apiClient.post<{ data: { group: GroupJoinResult } }>(`/groups/${id}/join`),
   sendInvitation: (id: string, email: string) => (
     apiClient.post<{ data: { message: string } }>(`/groups/${id}/members`, { email })
   ),
   acceptInvitation: (id: string) => apiClient.post(`/groups/${id}/invitations/accept`),
   declineInvitation: (id: string) => apiClient.delete(`/groups/${id}/invitations`),
   clearInvitations: (id: string) => apiClient.delete(`/groups/${id}/invitations`),
+  updateMemberRole: (id: string, memberId: string, role: GroupRole) => (
+    apiClient.put<{ data: { member: GroupMember } }>(`/groups/${id}/members/${memberId}`, { role })
+  ),
   removeMember: (id: string, memberId: string) => apiClient.delete(`/groups/${id}/members/${memberId}`),
   delete: (id: string) => apiClient.delete(`/groups/${id}`),
   createTask: (id: string, data: Partial<GroupTask>) => (

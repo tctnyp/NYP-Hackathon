@@ -551,6 +551,8 @@ Resources:
         - { AttributeName: SK, AttributeType: S }
         - { AttributeName: GSI1PK, AttributeType: S }
         - { AttributeName: GSI1SK, AttributeType: S }
+        - { AttributeName: GSI2PK, AttributeType: S }
+        - { AttributeName: GSI2SK, AttributeType: S }
       KeySchema:
         - { AttributeName: PK, KeyType: HASH }
         - { AttributeName: SK, KeyType: RANGE }
@@ -559,6 +561,11 @@ Resources:
           KeySchema:
             - { AttributeName: GSI1PK, KeyType: HASH }
             - { AttributeName: GSI1SK, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+        - IndexName: GSI2-PublicGroups
+          KeySchema:
+            - { AttributeName: GSI2PK, KeyType: HASH }
+            - { AttributeName: GSI2SK, KeyType: RANGE }
           Projection: { ProjectionType: ALL }
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
@@ -771,6 +778,10 @@ Resources:
     Properties:
       Role: !Ref LabRoleArn
       Handler: handlers/groups.handler
+      Environment:
+        Variables:
+          GROUP_INVITE_FROM_EMAIL: !Ref CognitoFromEmail
+          APP_URL: !Ref FrontendUrl
       Events:
         ListGroups:
           Type: Api
@@ -781,12 +792,21 @@ Resources:
         GetGroup:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}', Method: GET }
+        UpdateGroup:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}', Method: PUT }
         DeleteGroup:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}', Method: DELETE }
+        JoinPublicGroup:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}/join', Method: POST }
         InviteGroupMember:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}/members', Method: POST }
+        UpdateGroupMemberRole:
+          Type: Api
+          Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}/members/{memberId}', Method: PUT }
         RemoveGroupMember:
           Type: Api
           Properties: { RestApiId: !Ref TaskManagerApi, Path: '/groups/{groupId}/members/{memberId}', Method: DELETE }

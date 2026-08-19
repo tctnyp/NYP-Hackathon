@@ -959,6 +959,21 @@ describe('account handler', () => {
     expect(mockDeleteItem).not.toHaveBeenCalled();
   });
 
+
+  test('blocks account deletion for a creator membership stored with the new admin role', async () => {
+    mockQueryTable.mockResolvedValueOnce([{
+      PK: 'GROUP#group-1', SK: 'MEMBER#user-123', group_id: 'group-1',
+      entity_type: 'GROUP_MEMBER', role: 'admin', owner_id: 'user-123', GSI1PK: 'USER#user-123',
+    }]);
+
+    const response = await account.deleteAccount(event({ confirmation: 'DELETE' }));
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body).error).toMatch(/groups you own/i);
+    expect(mockCognitoSend).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+  });
+
   test('deletes memberships and invitations, personal data, media, profile, and Cognito identity', async () => {
     const pictureKey = `media/${'a'.repeat(40)}/profile_photo/avatar.png`;
     mockGetItem.mockResolvedValueOnce({ ...existingProfile, profile_picture_key: pictureKey });

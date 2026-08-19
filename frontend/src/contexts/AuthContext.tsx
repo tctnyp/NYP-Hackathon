@@ -5,6 +5,7 @@ import { AUTH_STORAGE_CHANGE_EVENT, type AuthStoragePreference } from '../servic
 export interface CognitoUser {
   sub: string;
   email: string;
+  email_verified?: boolean;
   username: string;
   groups?: string[];
   [key: string]: any;
@@ -36,6 +37,8 @@ interface AuthContextType {
   confirmForgotPassword: (username: string, code: string, newPassword: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   updateUserAttributes: (attributes: Array<{ Name: string; Value: string }>) => Promise<void>;
+  sendEmailVerificationCode: () => Promise<void>;
+  verifyEmail: (code: string) => Promise<void>;
   refreshSession: () => Promise<void>;
   loadSessionFromStorage: () => void;
   isAdmin: () => boolean;
@@ -219,6 +222,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await cognitoAuth.updateUserAttributes(attributes);
   };
 
+  const sendEmailVerificationCode = async () => {
+    await cognitoAuth.getUserAttributeVerificationCode('email');
+  };
+
+  const verifyEmail = async (code: string) => {
+    const normalizedCode = code.trim();
+    if (!/^\d{6}$/.test(normalizedCode)) throw new Error('Enter the six-digit verification code.');
+    await cognitoAuth.verifyUserAttribute('email', normalizedCode);
+    await refreshSession();
+  };
+
   const refreshSession = async () => {
     await cognitoAuth.refreshTokens();
     const idToken = tokenStorage.getIdToken();
@@ -253,6 +267,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     confirmForgotPassword,
     changePassword,
     updateUserAttributes,
+    sendEmailVerificationCode,
+    verifyEmail,
     refreshSession,
     loadSessionFromStorage,
     isAdmin,

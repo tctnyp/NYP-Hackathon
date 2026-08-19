@@ -399,6 +399,25 @@ export const cognitoAuth = {
     });
   },
 
+  async getUserAttributeVerificationCode(attributeName: 'email'): Promise<void> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    await cognitoRequest('AWSCognitoIdentityProviderService.GetUserAttributeVerificationCode', {
+      AccessToken: accessToken,
+      AttributeName: attributeName,
+    });
+  },
+
+  async verifyUserAttribute(attributeName: 'email', code: string): Promise<void> {
+    const accessToken = tokenStorage.getAccessToken();
+    if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+    await cognitoRequest('AWSCognitoIdentityProviderService.VerifyUserAttribute', {
+      AccessToken: accessToken,
+      AttributeName: attributeName,
+      Code: code,
+    });
+  },
+
   // OAuth / Hosted UI helpers. Both providers must be configured in Cognito.
   async initiateHostedUILogin(
     provider: 'Google' | 'Discord',
