@@ -1,4 +1,4 @@
-const CACHE_NAME = 'academic-tasks-v2';
+const CACHE_NAME = 'academic-tasks-v1';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -17,43 +17,6 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
-  );
-});
-
-self.addEventListener('message', (event) => {
-  if (event.data?.type !== 'SHOW_NOTIFICATION') return;
-  const notification = event.data.notification || {};
-  if (!notification.title || !notification.body) return;
-
-  event.waitUntil(self.registration.showNotification(notification.title, {
-    body: notification.body,
-    tag: notification.tag || 'academic-task-guidance',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    data: { url: notification.url || '/dashboard' },
-  }));
-});
-
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  let targetUrl = new URL('/dashboard', self.location.origin);
-  try {
-    const requestedUrl = new URL(event.notification.data?.url || '/dashboard', self.location.origin);
-    if (requestedUrl.origin === self.location.origin) targetUrl = requestedUrl;
-  } catch {
-    // Keep the safe dashboard fallback.
-  }
-
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
-      for (const client of clients) {
-        const clientUrl = new URL(client.url);
-        if (clientUrl.origin !== self.location.origin) continue;
-        await client.navigate(targetUrl.href);
-        return client.focus();
-      }
-      return self.clients.openWindow(targetUrl.href);
-    }),
   );
 });
 

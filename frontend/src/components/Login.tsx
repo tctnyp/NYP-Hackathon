@@ -50,8 +50,8 @@ function Login() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-100 rounded-full mb-4">
               <LogIn className="text-primary-600" size={32} />
             </div>
-            <h1 className="text-3xl font-bold text-gray-900">Welcome Back</h1>
-            <p className="text-gray-600 mt-2">Sign in to your account</p>
+            <h1 className="text-3xl font-bold text-gray-900">Log In</h1>
+            <p className="text-gray-600 mt-2">Sign in to your munera account</p>
           </div>
 
           {error && (
