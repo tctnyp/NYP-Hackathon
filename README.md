@@ -1,12 +1,13 @@
 # Academic Tasks
 
-> **Branch:** `main` — approved final production source.
+> **Branch:** `dev` — active development source with Smart AI planning.
 
 Academic Tasks is a responsive academic workload manager for deadlines, assignments, modules, progress, reminders, and study planning.
 
-## Production feature set
+## Development feature set
 
 - Task creation, editing, filtering, progress tracking, and deadline management
+- Gemini 3.1 Pro Preview Smart AI planning with explicit task-context consent and ordered rate-limit key failover
 - Module organization and dashboard summaries
 - User-reviewed task-field suggestions from a single-page JPEG, PNG, PDF, or TIFF uploaded temporarily to private Amazon S3 and analyzed through protected Amazon Textract
 - Resized profile photos and custom backgrounds in owner-scoped private S3 storage with short-lived signed access URLs
@@ -45,6 +46,27 @@ The regional API Gateway REST API uses a Cognito authorizer for protected applic
 Private reminders are addressed directly to one user's profile email through SES rather than broadcast through SNS. A legacy SNS topic may remain for infrastructure compatibility, but it is not the private notification transport. SES requires a verified source identity and, while the account is in the SES sandbox, compliant verified recipients. The externally supplied LabRole must permit `ses:SendEmail` and `textract:AnalyzeDocument` in addition to the application's existing service actions.
 
 Operational credentials, account identifiers, identity ARNs, and secrets are intentionally not published. Provider and OIDC signing secrets remain in protected deployment parameters; see [`frontend/OAUTH_SETUP.md`](frontend/OAUTH_SETUP.md) for the non-secret Google and Discord Cognito configuration, Calendar two-phase key rotation, redirect contract, and mandatory execution-role permission preflight.
+
+## Smart AI configuration
+
+Smart AI is an authenticated, suggestion-only study planner backed by the Gemini `generateContent` REST API. The browser sends requests only to `POST /smart-assistant`; API keys remain in Lambda environment variables populated from the `NoEcho` SAM parameters `GeminiApiKey1`, `GeminiApiKey2`, and `GeminiApiKey3`. Supply the three values at deployment time rather than adding them to frontend variables, source files, or committed SAM configuration.
+
+The backend uses `gemini-3.1-pro-preview` by default (configurable through `GeminiModel`). It tries key 1 first and advances to key 2 and then key 3 only when Gemini returns HTTP 429 or `RESOURCE_EXHAUSTED`. Authentication, permission, malformed-request, network, and other upstream errors do not rotate keys. If all configured keys are rate limited, the API returns a retryable 429 without disclosing any key or upstream payload.
+
+Students explicitly choose whether to include current task context. When enabled, only bounded incomplete-task summaries (title, module, deadline, status, priority, time estimate, and progress) are sent to Gemini; descriptions, account details, IDs, and completed tasks are excluded. Smart AI cannot mutate application data.
+
+Example deployment parameters (use protected CI/CD secrets or an interactive deployment prompt for the values):
+
+```text
+GeminiApiKey1=<primary secret>
+GeminiApiKey2=<second secret>
+GeminiApiKey3=<third secret>
+GeminiModel=gemini-3.1-pro-preview
+```
+
+The development backend target is the `academic-task-manager-dev` CloudFormation stack in `us-east-1`. Validate and build from `backend/`, then deploy with short-lived AWS credentials and the protected parameter values above. Verify CloudFormation completion, confirm the unsigned `/smart-assistant` request is rejected by Cognito, and use an authenticated request for the end-to-end Gemini smoke test. GitHub workflows validate and package frontend builds but do not publish hosting automatically.
+
+Because credentials were shared in chat, rotate them if the conversation or terminal history is accessible to anyone who should not have API access.
 
 ## Branch policy
 

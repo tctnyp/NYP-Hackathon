@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   Settings,
   Shield,
+  Sparkles,
   UsersRound,
   WifiOff,
   X,
@@ -30,9 +31,10 @@ const primaryNavigation = [
   { name: 'Groups', desktopName: 'Groups', href: '/groups', icon: UsersRound },
   { name: 'Calendar', desktopName: 'Calendar', href: '/calendar', icon: CalendarDays },
   { name: 'Modules', desktopName: 'Modules', href: '/modules', icon: BookOpen },
+  { name: 'Smart AI', desktopName: 'Smart AI', href: '/smart-ai', icon: Sparkles },
 ];
 
-const mobileNavigation = primaryNavigation.filter((item) => item.href !== '/modules');
+const mobileNavigation = primaryNavigation.filter((item) => !['/modules', '/smart-ai'].includes(item.href));
 
 function Layout({ children }: LayoutProps) {
   const location = useLocation();
@@ -50,7 +52,7 @@ function Layout({ children }: LayoutProps) {
   const pageName = isActive('/account/settings')
     ? 'Account settings'
     : desktopNavigation.find((item) => isActive(item.href))?.desktopName || 'Academic Tasks';
-  const moreActive = isActive('/modules') || isActive('/admin') || isActive('/account/settings');
+  const moreActive = isActive('/modules') || isActive('/smart-ai') || isActive('/admin') || isActive('/account/settings');
   const displayName = profile.display_name || user?.preferred_username || user?.username || 'User';
 
   const handleSignOut = async () => {
@@ -199,6 +201,7 @@ function Layout({ children }: LayoutProps) {
             <div className="grid grid-cols-2 gap-3">
               <Link to="/account/settings" className="more-tile" onClick={() => setMoreOpen(false)}><Settings size={21} /> <span>Account</span></Link>
               <Link to="/modules" className="more-tile" onClick={() => setMoreOpen(false)}><BookOpen size={21} /> <span>Modules</span></Link>
+              <Link to="/smart-ai" className="more-tile" onClick={() => setMoreOpen(false)}><Sparkles size={21} /> <span>Smart AI</span></Link>
               {isAdmin() && <Link to="/admin" className="more-tile" onClick={() => setMoreOpen(false)}><Shield size={21} /> <span>Admin</span></Link>}
               {canInstall && <button type="button" className="more-tile" onClick={() => void install()}><Download size={21} /> <span>Install app</span></button>}
               <button type="button" className="more-tile text-red-600" onClick={handleSignOut}><LogOut size={21} /> <span>Sign out</span></button>

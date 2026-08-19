@@ -7,6 +7,26 @@ Parameters:
     Type: String
     Default: dev
     AllowedValues: [dev, staging, prod]
+  GeminiApiKey1:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Primary server-side Gemini API key
+  GeminiApiKey2:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Second server-side Gemini API key used only when the primary key is rate limited
+  GeminiApiKey3:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Third server-side Gemini API key used only when the first two keys are rate limited
+  GeminiModel:
+    Type: String
+    Default: gemini-3.1-pro-preview
+    AllowedPattern: '^[A-Za-z0-9._-]{1,100}$'
+    Description: Gemini generateContent model identifier
   AdminUsername:
     Type: String
     Default: admin
@@ -798,6 +818,27 @@ Resources:
           Properties:
             RestApiId: !Ref TaskManagerApi
             Path: /task-extractions
+            Method: POST
+            Auth: { Authorizer: CognitoAuthorizer }
+
+  SmartAssistantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Ref LabRoleArn
+      Handler: handlers/smartAssistant.handler
+      Timeout: 29
+      Environment:
+        Variables:
+          GEMINI_API_KEY_1: !Ref GeminiApiKey1
+          GEMINI_API_KEY_2: !Ref GeminiApiKey2
+          GEMINI_API_KEY_3: !Ref GeminiApiKey3
+          GEMINI_MODEL: !Ref GeminiModel
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TaskManagerApi
+            Path: /smart-assistant
             Method: POST
             Auth: { Authorizer: CognitoAuthorizer }
 

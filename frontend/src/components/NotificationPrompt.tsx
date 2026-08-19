@@ -25,7 +25,7 @@ function NotificationPrompt() {
     setBusy(true);
     setError('');
     const enabled = await enableNotifications();
-    if (!enabled) setError('Notifications weren’t enabled. You can try again from Account settings.');
+    if (!enabled) setError('We couldn’t enable notifications. Check your device settings and try again.');
     setBusy(false);
   };
 
@@ -35,12 +35,12 @@ function NotificationPrompt() {
   };
 
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-950 sm:flex-row sm:items-center" aria-labelledby="notification-prompt-title">
+    <section className="notification-prompt flex flex-col gap-4 rounded-2xl border p-4 sm:flex-row sm:items-center" aria-labelledby="notification-prompt-title">
       <div className="flex min-w-0 flex-1 items-start gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"><BellRing size={21} /></span>
-        <div><h2 id="notification-prompt-title" className="font-semibold">Stay focused on what’s next</h2><p className="mt-1 text-sm leading-5 text-blue-800">While the PWA is backgrounded, get smart guidance at useful times—never during quiet hours and no more than three times a day.</p>{error && <p className="mt-2 text-xs font-semibold text-red-600" role="alert">{error}</p>}</div>
+        <div><h2 id="notification-prompt-title" className="font-semibold">Stay focused on what’s next</h2><p className="notification-prompt-copy mt-1 text-sm leading-5">Get timely task reminders when you switch to another app. We respect quiet hours and send no more than three reminders a day.</p>{error && <p className="mt-2 text-xs font-semibold text-red-600" role="alert">{error}</p>}</div>
       </div>
-      <div className="flex items-center gap-2"><button type="button" className="btn-primary flex-1 sm:flex-none" disabled={busy} onClick={() => void enable()}>{busy ? 'Enabling…' : 'Enable notifications'}</button><button type="button" className="icon-button text-blue-700" onClick={dismiss} aria-label="Dismiss notification prompt"><X size={18} /></button></div>
+      <div className="flex items-center gap-2"><button type="button" className="btn-primary flex-1 sm:flex-none" disabled={busy} onClick={() => void enable()}>{busy ? 'Enabling…' : 'Enable notifications'}</button><button type="button" className="notification-prompt-dismiss icon-button" onClick={dismiss} aria-label="Dismiss notification prompt"><X size={18} /></button></div>
     </section>
   );
 }
