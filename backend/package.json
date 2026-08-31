@@ -21,7 +21,7 @@
     "@aws-sdk/client-textract": "3.1115.0",
     "@aws-sdk/lib-dynamodb": "^3.1115.0",
     "@aws-sdk/s3-presigned-post": "3.1115.0",
-    "@aws-sdk/s3-request-presigner": "3.1115.0"
+    "@aws-sdk/s3-request-presigner": "3.1120.0"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.162",
