@@ -24,7 +24,7 @@
     "@aws-sdk/s3-request-presigner": "3.1126.0"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.162",
+    "@types/aws-lambda": "^8.10.163",
     "jest": "^30.5.0"
   }
 }
